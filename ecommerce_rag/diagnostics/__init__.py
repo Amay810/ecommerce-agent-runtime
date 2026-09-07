@@ -1,15 +1,7 @@
-"""Offline diagnostics that are deliberately outside the training path."""
+"""CPU diagnostics for the e-commerce agent runtime.
 
-from .argument_provenance import (
-    ArgumentAudit,
-    audit_tool_call,
-    audit_trajectory,
-    first_causal_error,
-)
+Diagnostic modules are imported explicitly so optional audit surfaces never
+become part of the runtime package import path.
+"""
 
-__all__ = [
-    "ArgumentAudit",
-    "audit_tool_call",
-    "audit_trajectory",
-    "first_causal_error",
-]
+__all__: list[str] = []

@@ -187,9 +187,9 @@ def test_artifact_audit_does_not_promote_messages_to_state(tmp_path):
 
 def test_post_training_artifact_boundary_is_explicit():
     assert artifact_project_boundary(
-        "data/simulations/tau3_g0e_train_qwen3_4b_temp08_k8/results.json"
+        "data/simulations/recorded_results.json"
     ) == "POST_TRAINING_OUT_OF_SCOPE"
     assert artifact_project_boundary(
-        "reports/argument_provenance_audit/canonical_inputs/base_results.json"
+        "reports/provenance_inputs/base_results.json"
     ) == "POST_TRAINING_OUT_OF_SCOPE"
     assert artifact_project_boundary("docs/harness_v2_llm_360_regraded_v2.json") == "AGENT_RUNTIME_SUMMARY_ONLY"

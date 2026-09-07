@@ -1,6 +1,6 @@
 {
   "measurement_type": "offline counterfactual measurement on recorded trajectories",
-  "artifact": "data/simulations/tau3_g0e_train_qwen3_4b_temp08_k8/results.json",
+  "artifact": "external recorded trajectory input (not shipped)",
   "provenance": "No model was called, no provider request was made, no tool was executed, and no database was changed.",
   "code_revision": "b09432ff568e6899f0af750707e7e5bb0b4c75f0",
   "input": {

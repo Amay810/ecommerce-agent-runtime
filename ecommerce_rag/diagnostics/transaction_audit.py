@@ -1156,9 +1156,9 @@ def _walk_keys(value: Any, *, depth: int = 0, max_depth: int = 3) -> set[str]:
 def artifact_project_boundary(path: Path | str) -> str:
     """Classify legacy files after the original project split.
 
-    Tau3/GRPO simulations and the recovered argument-provenance reports belong
-    to the post-training project. They may be schema-audited for provenance,
-    but they are excluded from current Agent Runtime trajectory counts.
+    Generated simulation and provenance reports belong to an external
+    post-training workflow. They may be schema-audited for provenance, but
+    they are excluded from current runtime trajectory counts.
     """
 
     normalized = str(path).replace("\\", "/").lower()
@@ -1166,11 +1166,9 @@ def artifact_project_boundary(path: Path | str) -> str:
         marker in normalized
         for marker in (
             "data/simulations/",
-            "reports/argument_provenance_audit/",
-            "reports/grpo_failure_audit/",
+            "reports/provenance_inputs/",
+            "reports/model_failure_audit/",
             "reports/community_baseline_eval/",
-            "tau3_",
-            "grpo",
         )
     ):
         return "POST_TRAINING_OUT_OF_SCOPE"

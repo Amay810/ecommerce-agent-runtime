@@ -39,7 +39,7 @@
         "external_test_tasks_combined": 100,
         "retail_environment_has_user_tools": false,
         "note_retail_environment": "get_environment() constructs Environment without user_tools and raises on solo_mode, so telecom's user-env surroundings logic is neither portable nor needed.",
-        "audited_by": "scripts/audit_tau3_retail_split.py"
+        "audited_by": "scripts/freeze_data_source_manifest.py"
       },
       "allowed_uses": [
         "retail train split teacher and on-policy rollouts",
@@ -70,7 +70,7 @@
         "LICENSE",
         "pyproject.toml"
       ],
-      "audit_artifact": "docs/tau3_split_audit.json",
+      "audit_artifact": null,
       "portability_assessment": "https://github.com/Amay810/ecommerce-agentic-rag-archive/blob/main/docs/retail_task_compiler_portability_assessment.md"
     },
     {

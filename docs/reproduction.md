@@ -2,40 +2,43 @@
 
 ## Install
 
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 ```
 
-## Deterministic smoke
+## Deterministic CPU smoke
 
-```powershell
-python -m ecommerce_rag.harness run `
-  --tasks ecommerce_rag/data/harness_smoke.jsonl `
-  --db logs/demo_agent.db `
-  --store logs/demo_trajectories.sqlite `
-  --output logs/demo_report.json `
-  --policy rule `
-  --repeats 1 `
+```bash
+python -m ecommerce_rag.harness run \
+  --tasks ecommerce_rag/data/harness_smoke.jsonl \
+  --db logs/demo_agent.db \
+  --store logs/demo_trajectories.sqlite \
+  --output logs/demo_report.json \
+  --policy rule \
+  --repeats 1 \
   --seed-db
-```
-
-## Real LLM policy
-
-Copy `.env.example`, configure either the local or OpenAI-compatible backend, and run the same command with `--policy llm`. Model, decoding configuration and task split must be recorded with every report.
-
-## Replay
-
-```powershell
-python -m ecommerce_rag.harness replay `
-  --store logs/demo_trajectories.sqlite `
-  --trajectory-id TRAJECTORY_ID
-```
-
-## Tests
-
-```powershell
 python -m pytest tests -q
 ```
 
-NSCC job files reproduce the historical fixed experiments and are indexed in `nscc/README.md`. Raw v2 artifacts are intentionally excluded from the release tree and are addressable by path and SHA-256 through `docs/release_manifest_agent_v2.json`.
+## Replay and audit
+
+```bash
+python -m ecommerce_rag.harness replay \
+  --store logs/demo_trajectories.sqlite \
+  --trajectory-id TRAJECTORY_ID
+python -m scripts.audit_transaction_contracts \
+  --artifact docs/harness_v2_llm_360_regraded_v2.json \
+  --output-dir reports/transaction_contracts \
+  --repetitions 15
+```
+
+The audit is read-only with respect to the checked-in source and does not call
+a model or external service.
+
+## Model-backed and external evaluation
+
+Copy `.env.example` and record the endpoint, model revision, task split, and
+decoding settings with every model-backed report. The optional cluster jobs in
+`nscc/` assume that the separately pinned Retail environment is available;
+they are not a local CPU smoke path.

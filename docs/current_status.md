@@ -1,131 +1,35 @@
 # Current status
 
-Last updated: 2026-08-19
+Last updated: 2026-09-07.
 
-## Decision
+The runtime baseline is frozen for the repository split. The supported local
+path is the deterministic harness plus CPU diagnostics; model-backed calls and
+external Retail evaluation remain environment-dependent.
 
-`P0 experiment control plane` and `P0 real-run provenance` are **CLOSED**.
-Do not reopen the tau3 runner for this.
+## Supported surface
 
-`G0-E exploration config` is **FROZEN**. Do not leave sampling knobs unspecified.
-Do not start GRPO training from this freeze. Do not put optimizer `P` (prompts per
-step) into the exploration command.
+- typed retail tools with identity, eligibility, confirmation, and idempotency
+  checks;
+- hybrid retrieval over the checked-in sample and policy data;
+- native function-call adaptation through the runtime boundary;
+- trajectory replay, process auditing, and transaction-contract auditing;
+- optional external Retail evaluation through the pinned environment described
+  in `docs/data_source_manifest.json`.
 
-`retail_task_compiler` / `compiled_retail_m1` remains **No-Go**.
-Do not add tasks, rerun S0, retune SFT, edit reward, or touch Track B.
+## Validation boundary
 
-## P0 freeze
+The CPU suite does not download weights, start a model server, or contact the
+external evaluation environment. A successful local test run therefore proves
+runtime contracts and deterministic fixtures, not model quality or cluster
+throughput.
 
-Smoke `tau3_retail_v1_p0_smoke` (Retail train tasks `0`, `1`; `pass_k=1`):
+The external Retail environment is pinned to commit
+`fc0055dc4e0a316c3f83133267fbd6faaa770992`. It must be checked out separately
+and its train/test split must remain frozen when an evaluation is run.
 
-| Native `info` | Observed |
-|---|---|
-| `agent_info.implementation` | `llm_agent` |
-| `agent_info.llm` | `hosted_vllm/Qwen3-4B-Instruct-2507` |
-| `agent_info.llm_args.temperature` | `0.0` |
-| `user_info.llm` | `deepseek/deepseek-chat` |
-| `user_info.llm_args.temperature` | `0.0` |
-| `seed` | `300` |
-| `num_trials` | `1` |
-| `max_steps` | `200` |
-| `checks_passed` | 8 |
-| `experiment_summary.valid` | `true` |
-| `infrastructure_errors` | `0` |
+## Next work
 
-`task1=1`, `task0=0` is protocol smoke, not a Base-quality or GRPO claim.
-
-## G0-E frozen exploration config
-
-```text
-group target K         = 8
-exploration num_trials = 8
-agent_temperature      = 0.8
-user_temperature       = 0.0
-seed                   = 300
-max_steps              = 200
-agent_name             = llm_agent
-agent_model            = hosted_vllm/Qwen3-4B-Instruct-2507
-user_model             = deepseek/deepseek-chat
-task_split             = train
-tasks                  = official Retail train 74
-trajectories           = 74 × 8 = 592
-```
-
-`num_trials=8` estimates, before training, how many prompts would yield
-non-zero-variance groups if each prompt were later sampled at GRPO group size
-K=8. It is not a claim that tau2 `num_trials` is the GRPO loss object.
-
-`agent_temperature=0.8` is the first-round engineering choice from the Slime
-Qwen3-4B RL recipe (`rollout-temperature=0.8`). It is **not** claimed to be
-optimal for τ² Retail + Qwen3-4B. Whether it is usable is decided by this
-74×8 group-variance measurement.
-
-Relative to historical S0 (`temperature=0.0`, `num_trials=4`, `seed=300`),
-the intended deltas are only:
-
-```text
-agent temp: 0.0 → 0.8
-trials:     4   → 8
-```
-
-User simulator stays DeepSeek at `user_temperature=0.0` so Agent sampling is
-the only new entropy source.
-
-## After the first 74×8 artifact
-
-1. Native provenance in that run's `results.json` (`info`, not the submit command):
-   implementation, agent model, agent temp `0.8`, user model, user temp `0.0`,
-   seed `300`, `num_trials=8`, `max_steps=200`.
-2. Infrastructure validity (`experiment_summary.valid`, `infrastructure_errors`).
-3. Only then reward: per-task `0/8`, `1/8`–`7/8` mixed, `8/8`; compare to S0
-   classes (21 all-zero, 37 mixed, 16 all-one); report
-   `non-zero-variance groups / 74`.
-
-Do not invent a “enough mixed groups” threshold before that distribution exists.
-
-## G0-E exploration result (COMPLETE)
-
-Artifact: [`data/simulations/tau3_g0e_train_qwen3_4b_temp08_k8/results.json`](../data/simulations/tau3_g0e_train_qwen3_4b_temp08_k8/results.json)
-
-Summary: [`docs/experiments/tau3_g0e_train_qwen3_4b_temp08_k8_summary.json`](experiments/tau3_g0e_train_qwen3_4b_temp08_k8_summary.json)
-
-| Check | Observed |
-|---|---|
-| `simulations` | `592` |
-| `experiment_summary.valid` | `true` |
-| `infrastructure_errors` | `0` |
-| `mean_reward` | `0.439` |
-| native agent temp | `0.8` |
-| native user temp | `0.0` |
-| native seed / `num_trials` | `300` / `8` |
-| `tau3_experiment.checks_passed` | 8/8 |
-
-Per-task group classes (74 train tasks × 8 trials):
-
-| Class | G0-E (`temp=0.8`, K=8) | S0 reference (`temp=0.0`, K=4) |
-|---|---:|---:|
-| `0/8` all-fail | 17 | 21 |
-| mixed (`1/8`–`7/8`) | 47 | 37 |
-| `8/8` all-pass | 10 | 16 |
-| non-zero-variance / usable mixed groups | **47 / 74** | 37 / 74 |
-| non-all-zero groups | 57 / 74 | 53 / 74 |
-
-This distribution exists; no GRPO-start threshold is asserted here.
-
-## Next
-
-```text
-P0                       CLOSED
-G0-E exploration         COMPLETE (592/592, valid)
-G0 GRPO code             PATCHED; NEXT → NSCC 1-step plumbing smoke
-```
-
-The frozen tau3 retail GRPO integration layer is patched, including the VERL
-multi-turn adapter, the pinned AgentGymEnv/evaluator boundary, frozen NL-judge
-routing, K=8/P=2 metadata, assistant-only mask contract, synchronous
-`main_ppo_sync` launch modes, and offline checks. The real AgentLoop,
-VERL/τ²/DeepSeek/Qwen run remains unverified until the NSCC runtime smoke
-test; no pilot result is claimed here. The prior offline PASS labels are not
-runtime integration evidence.
-Closed compiler artifacts live in
-[`Amay810/ecommerce-agentic-rag-archive`](https://github.com/Amay810/ecommerce-agentic-rag-archive).
+Keep changes inside the runtime/tool/retrieval contracts and record any new
+evaluation artifact with its provider, model revision, task split, and exact
+command. Do not add generated datasets, checkpoints, or provider logs to this
+repository.

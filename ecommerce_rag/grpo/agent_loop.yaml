@@ -1,2 +1,0 @@
-- name: tau3_agent
-  _target_: ecommerce_rag.grpo.verl_tau3_agent_loop.Tau3AgentLoop

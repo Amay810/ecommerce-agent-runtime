@@ -1,16 +1,14 @@
 # Script index
 
-The supported Agent entry point is `python -m ecommerce_rag.harness` for run, replay and compare.
+The supported local entry point is `python -m ecommerce_rag.harness` for run,
+replay, and compare.
 
-The active scripts are limited to:
+The scripts in this repository cover:
 
-- τ³ Retail execution and frozen-judge launch;
-- Phase 1 write-gate measurement (`scripts/run_phase1_write_gate.py`);
-- template parity and context-compaction measurement;
-- current source/split audits;
-- reproducible catalogue and harness fixture generation;
-- trajectory diagnostics.
+- deterministic catalogue, retrieval-index, harness, and SFT-data preparation;
+- external Retail evaluation and process audits;
+- context-history measurement and trajectory export;
+- the transaction-contract audit in `scripts/audit_transaction_contracts.py`.
 
-Retired S0/hint, Memory, verifier, evidence-ablation, legacy correction, and
-one-off smoke scripts are stored in the private research archive. New runtime
-features belong in the Agent contracts rather than in post-processing scripts.
+Scripts that require a model endpoint, external environment, or cluster are
+explicitly documented as such. They are not part of the CPU-only smoke path.
