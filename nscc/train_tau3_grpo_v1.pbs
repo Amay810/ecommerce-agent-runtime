@@ -8,7 +8,9 @@
 #PBS -l select=1:ncpus=16:ngpus=2:mem=110gb
 #PBS -l walltime=24:00:00
 #PBS -j oe
-#PBS -o logs/tau3_grpo_v1.pbs.log
+# Keep the scheduler-owned fallback log in the job working directory; the
+# script below creates the durable per-run logs after it has cd'd there.
+#PBS -o tau3_grpo_v1.pbs.log
 
 set -euo pipefail
 
@@ -16,7 +18,19 @@ set -euo pipefail
 # remains authoritative when the job is submitted from that checkout.
 cd "${PBS_O_WORKDIR:-/scratch/users/ntu/s250045/ecommerce-agentic-rag-main}"
 test -s scripts/train_tau3_grpo.py
-mkdir -p logs
+
+# Keep a durable copy of every launcher/preflight/trainer stream.  PBS -j oe
+# is still useful for scheduler diagnostics, but it is not a reliable
+# experiment artifact (and the output path may be opened before this script's
+# mkdir runs).  The explicit tee files survive the VERL subprocess and keep
+# stdout/stderr/combined traceback evidence in the run directory.
+GRPO_OUTPUT_DIR="${GRPO_OUTPUT_DIR:-results/tau3_grpo_v1}"
+GRPO_LOG_DIR="${GRPO_LOG_DIR:-$GRPO_OUTPUT_DIR/logs}"
+mkdir -p logs "$GRPO_LOG_DIR"
+exec \
+  > >(tee -a "$GRPO_LOG_DIR/stdout.log" "$GRPO_LOG_DIR/combined.log") \
+  2> >(tee -a "$GRPO_LOG_DIR/stderr.log" "$GRPO_LOG_DIR/combined.log" >&2)
+echo "GRPO_LOG_DIR=$GRPO_LOG_DIR"
 
 module purge
 module load cuda/12.8.1
@@ -36,7 +50,6 @@ test -x "$GRPO_PYTHON"
 # snapshot that passes the same frozen-commit validation.
 TAU_ROOT="${TAU_ROOT:-${TAU2_ROOT:-/scratch/users/ntu/s250045/tau2-bench}}"
 QWEN_MODEL_PATH="${QWEN_MODEL_PATH:-${QWEN_MODEL:-}}"
-GRPO_OUTPUT_DIR="${GRPO_OUTPUT_DIR:-results/tau3_grpo_v1}"
 GRPO_OPTIMIZER_STEPS="${GRPO_OPTIMIZER_STEPS:-9}"
 
 : "${DEEPSEEK_BASE_URL:?set DEEPSEEK_BASE_URL to an OpenAI-compatible DeepSeek relay reachable from this allocated PBS compute node}"
@@ -96,6 +109,7 @@ if [[ "$VISIBLE_GPU_COUNT" -ne "$EXPECTED_GPUS" ]]; then
 fi
 
 export PYTHONUNBUFFERED=1
+export PYTHONFAULTHANDLER=1
 export PYTHONNOUSERSITE=1
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1

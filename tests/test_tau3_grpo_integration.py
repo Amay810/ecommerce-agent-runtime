@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +127,18 @@ def test_nscc_launcher_is_synchronous_and_supports_both_step_modes(tmp_path):
         optimizer_steps=FROZEN_CONFIG.total_steps,
     )
     assert f"trainer.total_training_steps={FROZEN_CONFIG.total_steps}" in formal
+
+
+def test_nscc_launcher_persists_all_process_streams():
+    job = (Path(__file__).parents[1] / "nscc" / "train_tau3_grpo_v1.pbs").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'GRPO_LOG_DIR="${GRPO_LOG_DIR:-$GRPO_OUTPUT_DIR/logs}"' in job
+    assert 'tee -a "$GRPO_LOG_DIR/stdout.log"' in job
+    assert 'tee -a "$GRPO_LOG_DIR/stderr.log"' in job
+    assert '"$GRPO_LOG_DIR/combined.log"' in job
+    assert "export PYTHONFAULTHANDLER=1" in job
 
 
 def test_preflight_only_short_circuits_before_verl(tmp_path, monkeypatch, capsys):
