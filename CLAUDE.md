@@ -1,88 +1,31 @@
-# CLAUDE.md — Agent 工作协议
+# CLAUDE.md — Agent Runtime Working Agreement
 
-本文件是本仓库中所有 agent 行为的权威规则来源。与任何 session 内的口头指示冲突时,以本文件为准;确需偏离,由人类明确说明并优先。
+This repository is the standalone guarded e-commerce Agent Runtime. Keep
+changes within its current scope: provider-facing orchestration, typed retail
+tools, SQLite state, retrieval support, trajectory replay, and offline audits.
 
----
+## Scope boundaries
 
-## 1. 执行模式约束
+- Do not add GRPO, VERL, verifier, contrast, or training features here.
+- External Tau2/Tau3 evaluation is separately pinned and is not vendored.
+- Retrieval is a supporting capability; runtime state and transaction safety
+  remain the primary project boundary.
 
-### 无卡模式(无 GPU,cgroup 约 2 GiB / 0.5 核)
+## Validation rules
 
-- **允许自行 retry。**
-- **所有不需要 GPU 的调试必须在此完成:** 依赖安装、import 检查、配置解析、路径与权限、数据加载、tokenizer、单元测试、dry-run、CPU 侧代码路径。
-- 因 **2 GiB 内存上限**失败的项,记为「需 GPU 模式验证」,**不得**记为「已在无卡模式验证通过」,**不得**报成代码问题。
-- 请求开机前必须报告:「以下 N 项已在无卡模式验证通过;剩余 M 项需要 GPU,原因是 ___。」
+- Run CPU import, compile, and test checks before reporting completion.
+- Distinguish deterministic contract smoke from retrieval evaluation and from
+  model-backed or cluster execution.
+- Do not claim model quality, training success, or external-runtime validation
+  from local CPU checks.
+- Record failures and their exact scope; do not make a command appear green by
+  changing the acceptance criterion.
 
-### 有卡模式(有 GPU):默认零 retry
+## Repository hygiene
 
-- **一次失败即停**,收集证据返回,等人类决定。
-- **唯一例外:** 证据本身指明为外部瞬时故障(HTTP 429 响应体、socket timeout、`Resource temporarily unavailable` 文件锁)。允许重试一次,且**必须在报告中写明重试过**。
-- **GPU OOM、CUDA error、shape mismatch 一律不算瞬时,不重试。**
-- **禁止**以下伪装成 retry 的行为:改参数再跑、减小 batch 再跑、换等价命令再跑、清缓存再试。这是在用 GPU 时间做二分查找,应先把证据带回。
-
-### 有卡模式失败时必须收集(停止前完成)
-
-```
-完整 traceback,不截断
-失败前最后 200 行日志
-nvidia-smi(显存占用、进程)
-失败时刻进程树
-相关配置的实际生效值(运行时读取,不是从 yaml 读)
-命令、退出码、耗时
-```
-
-然后明确写出:**环境问题 / 配置问题 / 代码问题 / 判断不了**。判断不了就写判断不了,不要用推测填充。
-
-若为 OOM,额外记录:发生在 **rollout 阶段还是 optimizer step**、失败时刻显存占用、触发的具体调用栈位置。这决定 K/P 上限,只在第一次失败现场存在。
-
----
-
-## 2. 磁盘拓扑(AutoDL)
-
-| 路径 | 性质 | 关机 | 换镜像 |
-|---|---|---|---|
-| `/`(系统盘,约 30G) | 慢 | 保留 | **清空** |
-| `/root/autodl-tmp`(数据盘,50G) | 快 | 保留 | **保留** |
-
-- **所有运行产物必须落数据盘。** 包括 hydra 输出、日志、checkpoint、evidence。
-- `hydra.run.dir` 必须指向 `/root/autodl-tmp/` 下。默认写 `/root/outputs/`(系统盘)是已知隐患。
-- **关机前**确认本次产物已在数据盘或已拉走。
-- 代码同步只走 **VM → GitHub → 计算节点**。不用共享目录或 scp 同步代码。
-
----
-
-## 3. 证据标准
-
-**四个验证问题,每条建议都要能回答:**
-
-1. 这个结论对别人写的代码是否成立?
-2. 这个建议增加还是减少工作量?
-3. 这个数字的来源是什么?
-4. 来源是 spec / 论文 / 一手代码,还是博客 / 聚合页?
-
-**硬性要求:**
-
-- **不编造任何数字。** 每个体积、计数、指标都必须附实际命令输出。是估算就明确标注为估算。
-- 命令失败就报失败,不静默重试或换等价命令绕过。
-- 不确定写「不确定」,不用推测填充。
-- **不从部分代码阅读断言。** 区分「别人写了这个」和「我验证过这个」。
-- 自己的测量缺陷要主动作废并重测,不要让无效测量进入结论。
-- **不为让结果变绿而调整判据、增加 exclude、更换校验方法。** 判据在看到结果之前锁定。
-
----
-
-## 4. 报告规范
-
-**格式:** `REPORT.md`(决策级,硬上限 80 行)+ `EVIDENCE.md`(原始输出)。不写审计级长报告。
-
-**逐任务报告,报告后等确认再进下一项。** 不要连续执行多个任务。
-
-**不要把 debug 包装成工程经验。**
-
-修好一个 bug 就是修好一个 bug。踩过的坑不是方法论,查出的成因不是 research discovery,让脚本跑起来不是系统设计。报告里应当出现的是:观察到什么现象、用什么证据定位、改了什么、如何验证。**不应当**出现的是把排障过程升格成「设计了 X 机制」「建立了 Y 体系」「沉淀了 Z 方法论」。
-
-同理适用于简历与面试叙事:环境配置、依赖冲突、路径问题、网络隧道属于 infra,不进项目叙事主线,不占项目总结篇幅。
-
-**不给已有代码事后补存在理由。** 假设已 No-Go 的模块不因「代码已经写了」而复活。
-
----
+- Keep logs, indexes, model files, credentials, and raw trajectories out of
+  version control.
+- Use `TAU_ROOT` or an explicit CLI argument for external Tau2 checkouts.
+- Do not introduce developer-machine absolute paths as operational defaults.
+- Preserve evidence provenance, but label historical or external artifacts
+  clearly.

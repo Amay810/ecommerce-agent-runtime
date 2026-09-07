@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,12 @@ def main() -> None:
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--process-audit", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--tau-root", type=Path, default=Path(r"E:\cv_codex\external\tau2-bench"))
+    parser.add_argument(
+        "--tau-root",
+        type=Path,
+        default=Path(os.environ["TAU_ROOT"]) if os.environ.get("TAU_ROOT") else None,
+        help="Pinned Tau2 checkout; defaults to TAU_ROOT.",
+    )
     parser.add_argument("--teacher-model", required=True)
     parser.add_argument(
         "--teacher-usage-rights",
@@ -52,6 +58,8 @@ def main() -> None:
         help="Development-only: emit reward-verified candidates before process audit.",
     )
     args = parser.parse_args()
+    if args.tau_root is None:
+        parser.error("--tau-root or TAU_ROOT is required")
 
     config = DatasetBuildConfig(
         source_split="train",

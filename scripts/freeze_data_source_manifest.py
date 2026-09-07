@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--tau-root",
         type=Path,
-        default=Path(r"E:\cv_codex\external\tau2-bench"),
+        default=Path(os.environ["TAU_ROOT"]) if os.environ.get("TAU_ROOT") else None,
+        help="Pinned Tau2 checkout; defaults to TAU_ROOT.",
     )
     parser.add_argument(
         "--skip-tau-validate",
@@ -38,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Keep prior splits when the local τ³ checkout is unavailable.",
     )
     args = parser.parse_args(argv)
+
+    if not args.skip_tau_validate and args.tau_root is None:
+        parser.error("--tau-root or TAU_ROOT is required unless --skip-tau-validate is set")
 
     sources_doc = json.loads(args.sources.read_text(encoding="utf-8"))
     tau_status = {

@@ -20,6 +20,11 @@
 
 The 40-row audit is systematic rather than random. It produced 80.0% success agreement and 77.5% policy agreement with the v2 operational grader, so those proportions are not extrapolated to all trajectories. The fail-closed RL gate remained ineligible and no training claim is made.
 
+Metric terminology is frozen as follows: the current reported operational
+success is `303/360 = 84.17%`. The evidence JSON retains
+`legacy_automatic_operational_success = 94.17%` for historical compatibility;
+that legacy field is not the current operational headline.
+
 Closed methodology notes and the 40-row audit CSV are in the private archive:
 
 - [evaluation closeout](https://github.com/Amay810/ecommerce-agentic-rag-archive/blob/main/docs/evaluation_closeout_v2.md)

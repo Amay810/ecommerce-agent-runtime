@@ -11,7 +11,7 @@
 # TAU3_ADAPTER to the S0 checkpoint directory to serve the LoRA model.
 
 set -euo pipefail
-cd "${PBS_O_WORKDIR:-/scratch/users/ntu/s250045/ecommerce-agentic-rag-main}"
+cd "${PBS_O_WORKDIR:?PBS_O_WORKDIR is required; submit this job from the agent-runtime checkout}"
 
 module purge
 module load cuda/12.8.1

@@ -19,13 +19,16 @@ The model proposes the next action; the runtime validates the tool schema and
 protects write operations. The database, not the model, is the source of truth
 for order state.
 
-## Quick start
+## Quick start: contract smoke
+
+The default smoke is intentionally limited to runtime wiring, typed tools,
+state mutation, and guardrails. It does not claim retrieval quality.
 
 ```bash
 python -m venv .venv
 python -m pip install -r requirements-dev.txt
 python -m ecommerce_rag.harness run \
-  --tasks ecommerce_rag/data/harness_smoke.jsonl \
+  --tasks ecommerce_rag/data/harness_contract_smoke.jsonl \
   --db logs/demo_agent.db \
   --store logs/demo_trajectories.sqlite \
   --output logs/demo_report.json \
@@ -33,6 +36,22 @@ python -m ecommerce_rag.harness run \
   --repeats 1 \
   --seed-db
 python -m pytest tests -q
+```
+
+To exercise the retrieval scenarios, build the local index first and pass it
+to the broader smoke set:
+
+```bash
+python -m scripts.build_retrieval_index --output-dir ecommerce_rag/index
+python -m ecommerce_rag.harness run \
+  --tasks ecommerce_rag/data/harness_smoke.jsonl \
+  --index ecommerce_rag/index \
+  --db logs/retrieval_agent.db \
+  --store logs/retrieval_trajectories.sqlite \
+  --output logs/retrieval_report.json \
+  --policy rule \
+  --repeats 1 \
+  --seed-db
 ```
 
 For a model-backed run, copy `.env.example`, configure the local or
@@ -61,6 +80,10 @@ in `docs/data_source_manifest.json`.
 The repository does not claim model-training results. Offline reports are
 kept separate from the runtime path, and raw large artifacts are intentionally
 not part of this tree.
+
+The current reported Agent v2 operational metric is `303/360 = 84.17%`.
+The evidence JSON also retains `legacy_automatic_operational_success = 94.17%`
+for historical compatibility; it is not the current headline metric.
 
 See [reproduction](docs/reproduction.md), [current status](docs/current_status.md),
 [evaluation](docs/evaluation.md), and [transaction contracts](docs/transaction_contracts.md).

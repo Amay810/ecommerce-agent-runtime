@@ -12,7 +12,9 @@
       "pin": {
         "tag": "v1.0.1",
         "commit": "fc0055dc4e0a316c3f83133267fbd6faaa770992",
-        "local_path": "E:/cv_codex/external/tau2-bench"
+        "local_path": "E:/cv_codex/external/tau2-bench",
+        "local_path_classification": "PROVENANCE_ONLY",
+        "local_path_note": "Captured source provenance; current commands use --tau-root or TAU_ROOT."
       },
       "verified_facts": {
         "retail_train_tasks": 74,

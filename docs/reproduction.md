@@ -7,11 +7,11 @@ python -m venv .venv
 python -m pip install -r requirements-dev.txt
 ```
 
-## Deterministic CPU smoke
+## Deterministic CPU contract smoke
 
 ```bash
 python -m ecommerce_rag.harness run \
-  --tasks ecommerce_rag/data/harness_smoke.jsonl \
+  --tasks ecommerce_rag/data/harness_contract_smoke.jsonl \
   --db logs/demo_agent.db \
   --store logs/demo_trajectories.sqlite \
   --output logs/demo_report.json \
@@ -19,6 +19,22 @@ python -m ecommerce_rag.harness run \
   --repeats 1 \
   --seed-db
 python -m pytest tests -q
+```
+
+This four-task fixture checks order reads, an idempotent write, a blocked
+write, and an identity-verification handoff. Retrieval tasks are separate:
+
+```bash
+python -m scripts.build_retrieval_index --output-dir ecommerce_rag/index
+python -m ecommerce_rag.harness run \
+  --tasks ecommerce_rag/data/harness_smoke.jsonl \
+  --index ecommerce_rag/index \
+  --db logs/retrieval_agent.db \
+  --store logs/retrieval_trajectories.sqlite \
+  --output logs/retrieval_report.json \
+  --policy rule \
+  --repeats 1 \
+  --seed-db
 ```
 
 ## Replay and audit

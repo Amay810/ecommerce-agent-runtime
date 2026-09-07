@@ -13,8 +13,9 @@ hard candidates; the latter are not human-labelled yet.
 | 5,000 | 43,953 | 0.9542 | 0.9917 | 0.9798 | 0.9826 | 79.59ms | 125.73ms | 185.52MB |
 
 FAISS IndexFlatIP is the reported NSCC dense backend. Build time was not
-captured in the first run; `nscc/measure_index_builds.pbs` now records model
-load, embedding, persistence and total build time separately.
+captured in the first run. The historical measurement job referenced in the
+original report is not part of this release tree; use the local index-build
+command in `docs/retrieval.md` for the current reproducible path.
 
 ## 5k reranker decision
 
