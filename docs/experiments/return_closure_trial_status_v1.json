@@ -1,6 +1,6 @@
 {
   "experiment": "return-closure-skill-trial-v1",
-  "runtime_commit": "5230d1318e63027cf998b509406643eef50d94e8",
+  "runtime_commit": "7f85e96d9eb513412569577b681f85e7088b22e7",
   "scope": "single-agent return-request workflow; policy query/order query -> eligibility -> user confirmation -> return request",
   "deterministic_smoke": {
     "execution_class": "deterministic_offline",

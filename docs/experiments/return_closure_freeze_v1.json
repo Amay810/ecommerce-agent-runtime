@@ -1,8 +1,8 @@
 {
   "manifest_version": "return-closure-freeze-v1",
-  "runtime_commit": "5230d1318e63027cf998b509406643eef50d94e8",
+  "runtime_commit": "7f85e96d9eb513412569577b681f85e7088b22e7",
   "branch": "main",
-  "worktree_dirty": true,
+  "worktree_dirty": false,
   "simulated_today": "2026-07-20",
   "date_semantics": "days_since_delivery = (simulated_today - delivered_at).days; the existing tool also preserves the policy's quality_issue exception; this first-version trial filters all tasks to quality_issue=false, opened=false, and seven-day logic",
   "policy_path": "/home/may/Code/repos/ecommerce-agent-runtime/ecommerce_rag/data/policies.jsonl",
