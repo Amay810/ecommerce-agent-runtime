@@ -1,0 +1,42 @@
+{
+  "manifest_version": "return-closure-freeze-v1",
+  "runtime_commit": "5230d1318e63027cf998b509406643eef50d94e8",
+  "branch": "main",
+  "worktree_dirty": true,
+  "simulated_today": "2026-07-20",
+  "date_semantics": "days_since_delivery = (simulated_today - delivered_at).days; the existing tool also preserves the policy's quality_issue exception; this first-version trial filters all tasks to quality_issue=false, opened=false, and seven-day logic",
+  "policy_path": "/home/may/Code/repos/ecommerce-agent-runtime/ecommerce_rag/data/policies.jsonl",
+  "policy_sha256": "70dbb81d35744712df7a4a55389740ae4b747e9329a171d59b943050c821fec0",
+  "retrieval_index_path": null,
+  "retrieval_index_sha256": null,
+  "tasks_path": "ecommerce_rag/data/return_closure_tasks.jsonl",
+  "tasks_sha256": "c1489365853e5fc60f8191c3ee5c4b5df856c1725fc3748a5550dd2005ff77ee",
+  "seed": {
+    "users": 1000,
+    "orders": 10000,
+    "seed": 20260720
+  },
+  "runtime": {
+    "runtime_version": "system-v1",
+    "prompt_version": "ecommerce-native-v1",
+    "compact_context": "1",
+    "max_generation_retries": 1
+  },
+  "model": {
+    "backend": "openai-compatible-native-tools",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1",
+    "temperature": 0
+  },
+  "budget": {
+    "max_steps": 8,
+    "repeats": 1,
+    "max_generation_retries": 1,
+    "cost_threshold": {
+      "avg_tool_calls_ratio": 1.2
+    }
+  },
+  "user_simulator": "ecommerce_rag.harness.UserSimulator:v1",
+  "scorer": "ecommerce_rag.harness.grade:v1",
+  "model_experiment_status": "not_run_until_explicit_endpoint_is_configured"
+}

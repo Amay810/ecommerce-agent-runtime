@@ -88,7 +88,7 @@ class HarnessToolTests(unittest.TestCase):
         db = Path(d) / "env.db"; seed_database(db, users=20, orders=100)
         order, code = _eligible(db)
         task = TaskSpec("return_hidden", "return", order["user_id"], f"订单 {order['order_id']} 想退货", 8,
-                        allowed_tools=["check_return_eligibility", "create_return_request"],
+                        allowed_tools=["get_policy", "get_order", "check_return_eligibility", "create_return_request"],
                         expected_state={order["order_id"]: {"return_status": "requested"}},
                         initial_state={order["order_id"]: {"return_status": None, "version": 0}},
                         metadata={"order_id": order["order_id"], "verification_code": code,
@@ -96,7 +96,9 @@ class HarnessToolTests(unittest.TestCase):
         trajectory, result = HarnessRunner(db, policy=RulePolicy()).run(task)
         assert result.success and result.leakage_checked
         assert len(trajectory.user_simulator_spans) == 2
-        assert [c.name for c in trajectory.tool_calls] == ["check_return_eligibility", "create_return_request"]
+        assert [c.name for c in trajectory.tool_calls] == [
+            "get_policy", "get_order", "check_return_eligibility", "create_return_request"
+        ]
 
  def test_illegal_return_is_blocked_without_state_change(self):
     with tempfile.TemporaryDirectory() as d:
@@ -115,8 +117,20 @@ class HarnessToolTests(unittest.TestCase):
         order, code = _eligible(db); tools = RetailTools(db)
         blocked = tools.call("create_return_request", order_id=order["order_id"], user_id=order["user_id"], verification_code=code, confirmed=False)
         assert blocked["changed"] is False and blocked["error"] == "confirmation_required"
-        ok = tools.call("create_return_request", order_id=order["order_id"], user_id=order["user_id"], verification_code=code, confirmed=True)
-        again = tools.call("create_return_request", order_id=order["order_id"], user_id=order["user_id"], verification_code=code, confirmed=True)
+        args = {"order_id": order["order_id"], "user_id": order["user_id"],
+                "verification_code": code, "confirmed": True}
+        tools.issue_confirmation(session_id="test", user_id=order["user_id"],
+                                 operation="create_return_request", arguments=args,
+                                 request_text="确认提交退货？")
+        assert tools.record_user_confirmation(session_id="test",
+                                              response_text="确认提交退货")["decision"] is True
+        confirmation_id = tools.authorization_for(
+            session_id="test", user_id=order["user_id"],
+            operation="create_return_request", arguments=args)
+        ok = tools.call("create_return_request", _session_id="test",
+                        _confirmation_id=confirmation_id, **args)
+        again = tools.call("create_return_request", _session_id="test",
+                           _confirmation_id=confirmation_id, **args)
         assert ok["changed"] is True and again["changed"] is False
         assert ok["ok"] is True and again["ok"] is True
         assert again["idempotent_replay"] is True

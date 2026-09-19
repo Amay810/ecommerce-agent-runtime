@@ -1,0 +1,12 @@
+{
+  "experiment": "return-closure-skill-candidate-v1",
+  "status": "no_candidate",
+  "base_skill": {
+    "skill_id": "return_request",
+    "skill_version": "v0",
+    "skill_content_hash": "a744e32c5d31400336a9cdc19a649ce73f76416e5f21d405596a29e19ef51f8a",
+    "skill_path": "skills/return_request/SKILL.md"
+  },
+  "scope": "only return_request Skill content; no model, tool, policy, task, scorer, or budget changes",
+  "reason": "exploration arm B has no real task failure"
+}

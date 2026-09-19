@@ -46,6 +46,37 @@ def _user_row(db: Path, user_id: str):
         conn.close()
 
 
+def _call(tools: RetailTools, name: str, **arguments):
+    """Exercise writes through the same trusted confirmation boundary as production."""
+
+    if arguments.get("confirmed") is True:
+        session_id = f"test:{name}:{len(tools.calls)}"
+        user_id = str(arguments.get("user_id") or "")
+        tools.issue_confirmation(
+            session_id=session_id,
+            user_id=user_id,
+            operation=name,
+            arguments=arguments,
+            request_text=f"确认执行 {name}",
+        )
+        assert tools.record_user_confirmation(
+            session_id=session_id, response_text="确认执行"
+        )["decision"] is True
+        confirmation_id = tools.authorization_for(
+            session_id=session_id,
+            user_id=user_id,
+            operation=name,
+            arguments=arguments,
+        )
+        return tools.call(
+            name,
+            _session_id=session_id,
+            _confirmation_id=confirmation_id,
+            **arguments,
+        )
+    return tools.call(name, **arguments)
+
+
 def test_compiler_write_tools_are_executable_on_retail_tools():
     tools = RetailTools(":memory:")
     missing = sorted(RETAIL_WRITE_TOOLS - tools.executable_tool_names())
@@ -69,7 +100,7 @@ def test_cancel_requires_confirmation_and_blocks_non_pending():
         seed_database(db, users=20, orders=100)
         tools = RetailTools(db)
         pending, code = _pending(db)
-        blocked = tools.call(
+        blocked = _call(tools,
             "cancel_pending_order",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -83,7 +114,7 @@ def test_cancel_requires_confirmation_and_blocks_non_pending():
             "error": "confirmation_required",
             "order_id": pending["order_id"],
         }
-        ok = tools.call(
+        ok = _call(tools,
             "cancel_pending_order",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -92,7 +123,7 @@ def test_cancel_requires_confirmation_and_blocks_non_pending():
             confirmed=True,
         )
         assert ok["ok"] and ok["changed"] and ok["status"] == "cancelled"
-        again = tools.call(
+        again = _call(tools,
             "cancel_pending_order",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -103,7 +134,7 @@ def test_cancel_requires_confirmation_and_blocks_non_pending():
         assert again["ok"] and again["idempotent_replay"] and again["changed"] is False
 
         delivered, dcode = _delivered_eligible(db)
-        refused = tools.call(
+        refused = _call(tools,
             "cancel_pending_order",
             order_id=delivered["order_id"],
             user_id=delivered["user_id"],
@@ -127,7 +158,7 @@ def test_modify_address_payment_items_guards():
         # Seed defaults to credit_card_*; switch onto the other method so the write is real.
         target_payment = payment if pending.get("payment_method_id") != payment else alt_payment
 
-        no_confirm = tools.call(
+        no_confirm = _call(tools,
             "modify_pending_order_address",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -142,7 +173,7 @@ def test_modify_address_payment_items_guards():
         )
         assert no_confirm["error"] == "confirmation_required"
 
-        addr = tools.call(
+        addr = _call(tools,
             "modify_pending_order_address",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -157,7 +188,7 @@ def test_modify_address_payment_items_guards():
         )
         assert addr["ok"] and addr["changed"]
 
-        pay = tools.call(
+        pay = _call(tools,
             "modify_pending_order_payment",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -167,7 +198,7 @@ def test_modify_address_payment_items_guards():
         )
         assert pay["ok"] and pay["changed"] and pay["payment_method_id"] == target_payment
 
-        items = tools.call(
+        items = _call(tools,
             "modify_pending_order_items",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -180,7 +211,7 @@ def test_modify_address_payment_items_guards():
         assert items["ok"] and items["changed"] and items["product_id"] == "P99999"
 
         delivered, dcode = _delivered_eligible(db)
-        blocked = tools.call(
+        blocked = _call(tools,
             "modify_pending_order_payment",
             order_id=delivered["order_id"],
             user_id=delivered["user_id"],
@@ -202,7 +233,7 @@ def test_return_and_exchange_delivered_guards():
         )[0]
 
         pending, pcode = _pending(db)
-        wrong_state = tools.call(
+        wrong_state = _call(tools,
             "exchange_delivered_order_items",
             order_id=pending["order_id"],
             user_id=pending["user_id"],
@@ -214,7 +245,7 @@ def test_return_and_exchange_delivered_guards():
         )
         assert wrong_state["error"] == "order_not_delivered"
 
-        returned = tools.call(
+        returned = _call(tools,
             "return_delivered_order_items",
             order_id=delivered["order_id"],
             user_id=delivered["user_id"],
@@ -224,7 +255,7 @@ def test_return_and_exchange_delivered_guards():
             confirmed=True,
         )
         assert returned["ok"] and returned["changed"] and returned["return_status"] == "requested"
-        again = tools.call(
+        again = _call(tools,
             "return_delivered_order_items",
             order_id=delivered["order_id"],
             user_id=delivered["user_id"],
@@ -251,7 +282,7 @@ def test_return_and_exchange_delivered_guards():
         pay = exchange_order["payment_method_id"] or json.loads(
             _user_row(db, exchange_order["user_id"])["payment_methods"]
         )[0]
-        exchanged = tools.call(
+        exchanged = _call(tools,
             "exchange_delivered_order_items",
             order_id=exchange_order["order_id"],
             user_id=exchange_order["user_id"],
@@ -294,7 +325,7 @@ def test_refund_payment_method_invariant_allows_original_or_existing_gift_card_o
                 "other_user_payment_method": other_payment,
                 "foreign_gift_card": foreign_gift_card,
             }[case]
-            result = tools.call(
+            result = _call(tools,
                 "return_delivered_order_items",
                 order_id=delivered["order_id"],
                 user_id=delivered["user_id"],
@@ -316,7 +347,7 @@ def test_modify_user_address_requires_confirmation_and_is_idempotent():
         seed_database(db, users=8, orders=20)
         tools = RetailTools(db)
         user = _user_row(db, "U0001")
-        blocked = tools.call(
+        blocked = _call(tools,
             "modify_user_address",
             user_id=user["user_id"],
             verification_code=user["verification_code"],
@@ -329,7 +360,7 @@ def test_modify_user_address_requires_confirmation_and_is_idempotent():
             confirmed=False,
         )
         assert blocked["error"] == "confirmation_required"
-        ok = tools.call(
+        ok = _call(tools,
             "modify_user_address",
             user_id=user["user_id"],
             verification_code=user["verification_code"],
@@ -342,7 +373,7 @@ def test_modify_user_address_requires_confirmation_and_is_idempotent():
             confirmed=True,
         )
         assert ok["ok"] and ok["changed"]
-        again = tools.call(
+        again = _call(tools,
             "modify_user_address",
             user_id=user["user_id"],
             verification_code=user["verification_code"],
@@ -363,7 +394,7 @@ def test_identity_guard_blocks_new_write_tools_without_code():
         seed_database(db, users=8, orders=40)
         tools = RetailTools(db)
         pending, _ = _pending(db)
-        blocked = tools.call(
+        blocked = _call(tools,
             "cancel_pending_order",
             order_id=pending["order_id"],
             user_id=pending["user_id"],

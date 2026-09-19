@@ -91,15 +91,15 @@ FROZEN_CONTRACTS: tuple[Contract, ...] = (
         "ecommerce_rag/tools.py:_identity_guard,_verified_order,_verified_user",
     ),
     Contract(
-        "A2_confirmation_boolean",
-        "Explicit confirmation boolean is required by write tools",
+        "A2_confirmation_binding",
+        "Explicit confirmation boolean plus trusted bound authorization are required by write tools",
         "invocation_precondition",
         tuple(sorted(CONFIRMATION_TOOLS)),
-        ("confirmed",),
+        ("confirmed", "session/user/operation/parameter-bound authorization"),
         "high",
         "precondition",
         "boolean True only; no truthy coercion",
-        "ecommerce_rag/tools.py write methods and tool_schema.py required fields",
+        "ecommerce_rag/confirmation.py and ecommerce_rag/tools.py write methods",
     ),
     Contract(
         "S1_legal_state_transition",
@@ -508,7 +508,7 @@ def _precondition_violations(
 
     if tool in CONFIRMATION_TOOLS and args.get("confirmed") is not True:
         violations.append(
-            _violation("A2_confirmation_boolean", "pre", "confirmed must be literal True")
+            _violation("A2_confirmation_binding", "pre", "confirmed must be literal True and trusted authorization must be present")
         )
 
     if tool == "cancel_pending_order" and order and order.get("status") not in {"pending", "cancelled"}:
@@ -736,7 +736,38 @@ class ReplayRunner:
         for step_idx, action in enumerate(actions):
             before = database_state(self.db_path)
             try:
-                result = runtime.call(action.tool, **copy.deepcopy(action.args))
+                call_args = copy.deepcopy(action.args)
+                trusted_session = f"replay:{trajectory_id}"
+                trusted_confirmation = None
+                if (
+                    self.guardrails
+                    and action.tool in CONFIRMATION_TOOLS
+                    and call_args.get("confirmed") is True
+                    and isinstance(runtime, RetailTools)
+                ):
+                    runtime.issue_confirmation(
+                        session_id=trusted_session,
+                        user_id=str(call_args.get("user_id") or ""),
+                        operation=action.tool,
+                        arguments=call_args,
+                        request_text="replay confirmation",
+                    )
+                    runtime.record_user_confirmation(
+                        session_id=trusted_session,
+                        response_text="确认执行",
+                    )
+                    trusted_confirmation = runtime.authorization_for(
+                        session_id=trusted_session,
+                        user_id=str(call_args.get("user_id") or ""),
+                        operation=action.tool,
+                        arguments=call_args,
+                    )
+                result = runtime.call(
+                    action.tool,
+                    _session_id=trusted_session if trusted_confirmation else None,
+                    _confirmation_id=trusted_confirmation,
+                    **call_args,
+                )
             except Exception as exc:  # pragma: no cover - defensive adapter boundary
                 result = {"ok": False, "changed": False, "error": f"{type(exc).__name__}: {exc}"}
             after = database_state(self.db_path)

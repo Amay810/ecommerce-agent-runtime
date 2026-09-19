@@ -18,6 +18,7 @@ from typing import Any, Callable
 from .agent_runtime import AgentRuntime, RuntimeConfig
 from .context_compaction import context_compaction_enabled
 from .domain import AgentAction, AgentObservation
+from .skill_loader import Skill, load_skill
 from .tool_schema import IDENTITY_TOOLS, ToolArgumentError, has_valid_verification_code, validate_arguments
 
 
@@ -158,11 +159,14 @@ class NativeToolPolicy:
         max_parse_retries: int = 1,
         generator_meta: dict[str, Any] | None = None,
         compact_context: bool = True,
+        skill_path: str | os.PathLike[str] | None = None,
+        skill_enabled: bool = False,
     ):
         self.generate = generate
         self.max_parse_retries = max_parse_retries
         self.generator_meta = generator_meta or {}
         self.compact_context = compact_context
+        self.skill: Skill | None = load_skill(skill_path) if skill_enabled and skill_path else None
         self.retry_count = 0
         self.last_trace: dict[str, Any] = {}
         self.runtime = AgentRuntime(
@@ -172,19 +176,30 @@ class NativeToolPolicy:
                 compact_context=compact_context,
                 max_generation_retries=max_parse_retries,
                 instruction=NATIVE_SYSTEM_PROMPT,
+                skill_id=self.skill.skill_id if self.skill else None,
+                skill_version=self.skill.version if self.skill else None,
+                skill_content_hash=self.skill.content_hash if self.skill else None,
+                skill_instructions=self.skill.content if self.skill else "",
             )
         )
 
     @classmethod
-    def from_env(cls) -> "NativeToolPolicy":
-        base_url = os.getenv("ARAG_LLM_BASE_URL", "https://api.openai.com/v1")
-        model = os.getenv("ARAG_LLM_MODEL", "gpt-4o-mini")
-        api_key = os.getenv("ARAG_LLM_API_KEY", "")
+    def from_env(
+        cls,
+        *,
+        skill_path: str | os.PathLike[str] | None = None,
+        skill_enabled: bool = False,
+    ) -> "NativeToolPolicy":
+        base_url = os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "https://api.openai.com/v1"))
+        model = os.getenv("ARAG_LLM_MODEL", os.getenv("ERAG_LLM_MODEL", "gpt-4o-mini"))
+        api_key = os.getenv("ARAG_LLM_API_KEY", os.getenv("ERAG_LLM_API_KEY", ""))
         compact = context_compaction_enabled(default=True)
         return cls(
             cls._openai_generator(base_url, api_key, model),
             generator_meta={"backend": "openai_native_tools", "model": model, "base_url": base_url},
             compact_context=compact,
+            skill_path=skill_path,
+            skill_enabled=skill_enabled,
         )
 
     @staticmethod
@@ -342,6 +357,7 @@ class NativeToolPolicy:
                 "attempts": attempts,
                 "generator": self.generator_meta,
                 "protocol": "native_tool_calls",
+                "runtime": self.runtime.config.to_dict(),
             }
             return action
 
@@ -351,5 +367,6 @@ class NativeToolPolicy:
             "resolution": "fallback_handoff", "attempts": attempts,
             "generator": self.generator_meta, "protocol": "native_tool_calls",
             "final_stage": final_stage, "fallback_reason": reason,
+            "runtime": self.runtime.config.to_dict(),
         }
         return AgentAction.handoff(reason)

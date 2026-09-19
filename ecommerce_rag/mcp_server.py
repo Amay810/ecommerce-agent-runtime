@@ -9,6 +9,7 @@ from an MCP tool argument.
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,14 +39,34 @@ MCP_TOOL_NAMES = (
 
 
 class MCPRetailFacade:
-    def __init__(self, tools: RetailTools, user_id: str):
+    def __init__(self, tools: RetailTools, user_id: str, session_id: str | None = None):
         self.tools = tools
         self.user_id = user_id
+        self.session_id = session_id or f"mcp_{uuid.uuid4().hex[:12]}"
 
     def _user_call(self, name: str, **arguments: Any) -> dict[str, Any]:
         if not self.user_id:
             return {"ok": False, "changed": False, "error": "mcp_user_not_configured"}
-        return self.tools.call(name, user_id=self.user_id, **arguments)
+        return self.tools.call(name, _session_id=self.session_id, user_id=self.user_id, **arguments)
+
+    def issue_confirmation(self, operation: str, arguments: dict[str, Any], request_text: str) -> str:
+        """Trusted host callback used before presenting a confirmation prompt."""
+
+        return self.tools.issue_confirmation(
+            session_id=self.session_id,
+            user_id=self.user_id,
+            operation=operation,
+            arguments={"user_id": self.user_id, **arguments},
+            request_text=request_text,
+        )
+
+    def record_user_confirmation(self, response_text: str) -> dict[str, Any]:
+        """Trusted host callback used with the actual user response."""
+
+        return self.tools.record_user_confirmation(
+            session_id=self.session_id,
+            response_text=response_text,
+        )
 
     def search_catalog(self, query: str, top_k: int = 5,
                        category: str | None = None, max_price: float | None = None) -> dict[str, Any]:

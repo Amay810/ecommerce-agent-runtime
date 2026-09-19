@@ -109,6 +109,7 @@ class Trajectory:
     actions: list[dict[str, Any]] = field(default_factory=list)
     retry_spans: list[dict[str, Any]] = field(default_factory=list)
     user_simulator_spans: list[dict[str, Any]] = field(default_factory=list)
+    confirmation_spans: list[dict[str, Any]] = field(default_factory=list)
     evidence_ledger: list[dict[str, Any]] = field(default_factory=list)
     verification_spans: list[dict[str, Any]] = field(default_factory=list)
     repair_spans: list[dict[str, Any]] = field(default_factory=list)

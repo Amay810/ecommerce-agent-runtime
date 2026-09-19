@@ -52,6 +52,54 @@ python -m scripts.audit_transaction_contracts \
 The audit is read-only with respect to the checked-in source and does not call
 a model or external service.
 
+## Return-closure workflow
+
+Freeze the deterministic date, policy/task hashes, SQLite seed, runtime and
+model configuration before a trial:
+
+```bash
+python -m scripts.freeze_return_closure \
+  --tasks ecommerce_rag/data/return_closure_tasks.jsonl \
+  --output docs/experiments/return_closure_freeze_v1.json
+```
+
+The four business cases are covered in the 24-task file (8 exploration, 8
+validation, 8 locked): eligible three-day unopened/no-quality return, expired
+ten-day return, explicit confirmation refusal, and idempotent duplicate.
+Deterministic CPU wiring can be checked with the rule policy, but that is not a
+model result:
+
+```bash
+python -m scripts.run_skill_trial --policy rule --arm A --split exploration \
+  --output logs/return_a_exploration.json
+python -m scripts.run_skill_trial --policy rule --arm B --split exploration \
+  --output logs/return_b_exploration.json
+python -m scripts.propose_skill_patch \
+  --exploration-report logs/return_b_exploration.json \
+  --store logs/return_closure_trajectories.sqlite \
+  --output logs/return_candidate.json
+```
+
+For a configured OpenAI-compatible native tool service, run A/B/C with the
+same model settings and task seeds. The Skill is enabled only when passed:
+
+```bash
+python -m scripts.run_skill_trial --policy native --arm A --split validation \
+  --output logs/return_a_validation.json
+python -m scripts.run_skill_trial --policy native --arm B --split validation \
+  --output logs/return_b_validation.json
+python -m scripts.run_skill_trial --policy native --arm all \
+  --candidate logs/return_request_candidate_v1/SKILL.md \
+  --split validation --output logs/return_abc_validation.json
+python -m scripts.compare_skill_trials --report logs/return_abc_validation.json \
+  --output logs/return_candidate_decision.json
+```
+
+The comparator is intentionally conservative: it requires a strict task-count
+increase, no regression, zero illegal writes, no increase in illegal attempts,
+non-degraded answer evidence/tool errors, and no more than 20% additional tool
+calls. A missing model service is recorded as `not_executed`, not as a score.
+
 ## Model-backed and external evaluation
 
 Copy `.env.example` and record the endpoint, model revision, task split, and

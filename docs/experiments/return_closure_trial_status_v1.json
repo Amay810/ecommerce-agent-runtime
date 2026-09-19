@@ -1,0 +1,60 @@
+{
+  "experiment": "return-closure-skill-trial-v1",
+  "runtime_commit": "5230d1318e63027cf998b509406643eef50d94e8",
+  "scope": "single-agent return-request workflow; policy query/order query -> eligibility -> user confirmation -> return request",
+  "deterministic_smoke": {
+    "execution_class": "deterministic_offline",
+    "policy": "RulePolicy",
+    "tasks": 4,
+    "success": 4,
+    "illegal_writes": 0,
+    "business_cases": [
+      "three-day unopened/no-quality confirmed submit",
+      "ten-day unopened/no-quality ineligible and no write",
+      "eligible order with explicit refusal and no write",
+      "existing return request idempotent replay with no second version change"
+    ],
+    "artifact": "docs/experiments/return_closure_deterministic_smoke_v1.json"
+  },
+  "exploration": {
+    "execution_class": "deterministic_offline",
+    "tasks": 8,
+    "baseline_a_success": 8,
+    "skill_v0_b_success": 8,
+    "candidate_status": "no_candidate",
+    "reason": "no real model exploration failure was available; deterministic results are environment validation only",
+    "artifact": "docs/experiments/return_closure_exploration_deterministic_v1.json",
+    "candidate_artifact": "docs/experiments/return_closure_candidate_v1.json"
+  },
+  "model_arms": {
+    "A": "not_executed",
+    "B": "not_executed",
+    "C": "not_executed",
+    "reason": "no ARAG_LLM_API_KEY/ERAG_LLM_API_KEY was configured in the execution environment"
+  },
+  "offline_validation": {
+    "execution_class": "deterministic_offline",
+    "tasks": 8,
+    "baseline_a_success": 8,
+    "skill_v0_b_success": 8,
+    "illegal_writes": 0,
+    "artifact": "docs/experiments/return_closure_validation_deterministic_v1.json"
+  },
+  "offline_locked_test": {
+    "execution_class": "deterministic_offline",
+    "tasks": 8,
+    "baseline_a_success": 8,
+    "skill_v0_b_success": 8,
+    "illegal_writes": 0,
+    "artifact": "docs/experiments/return_closure_locked_deterministic_v1.json"
+  },
+  "model_validation": "not_run",
+  "model_locked_test": "not_run",
+  "promotion": "not_evaluated",
+  "native_probe_artifact": "docs/experiments/return_closure_native_not_executed_v1.json",
+  "notes": [
+    "Deterministic Oracle/Rule results do not represent model performance.",
+    "A candidate is not fabricated when exploration has no real failure.",
+    "The active Skill remains v0 and is rollback-safe by selecting the prior path or disabling --skill."
+  ]
+}

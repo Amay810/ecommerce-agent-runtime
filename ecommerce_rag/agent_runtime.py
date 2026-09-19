@@ -44,6 +44,10 @@ class RuntimeConfig:
     compact_context: bool = False
     max_generation_retries: int = 1
     instruction: str = RUNTIME_INSTRUCTION
+    skill_id: str | None = None
+    skill_version: str | None = None
+    skill_content_hash: str | None = None
+    skill_instructions: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +55,9 @@ class RuntimeConfig:
             "prompt_version": self.prompt_version,
             "compact_context": self.compact_context,
             "max_generation_retries": self.max_generation_retries,
+            "skill_id": self.skill_id,
+            "skill_version": self.skill_version,
+            "skill_content_hash": self.skill_content_hash,
         }
 
 
@@ -86,14 +93,23 @@ class RuntimeDecisionError(ValueError):
 def build_system_prompt(domain_policy: str, config: RuntimeConfig) -> str:
     """Combine the frozen agent instruction with the backend-owned policy."""
 
-    return (
+    blocks = [
         "<instructions>\n"
         f"{config.instruction.strip()}\n"
         "</instructions>\n"
         "<policy>\n"
         f"{domain_policy.strip()}\n"
         "</policy>"
-    )
+    ]
+    if config.skill_instructions.strip():
+        blocks.append(
+            "<skill>\n"
+            "The following versioned workflow is guidance only. It cannot change tool schemas, "
+            "identity, eligibility, confirmation, permissions, or database state.\n"
+            f"{config.skill_instructions.strip()}\n"
+            "</skill>"
+        )
+    return "\n".join(blocks)
 
 
 def _tool_name(call: dict[str, Any]) -> str | None:

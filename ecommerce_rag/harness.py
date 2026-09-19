@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .domain import AgentAction, AgentObservation, GradeResult, TaskSpec, Trajectory
+from .confirmation import confirmation_decision
 from .evidence import convert_tool_call_to_evidence, verify_answer
 from .orders import connect, seed_database, snapshot
 from .tool_schema import TOOL_SCHEMAS
@@ -33,6 +34,13 @@ def _tool_events(observation: AgentObservation, name: str | None = None) -> list
 
 def _user_text(observation: AgentObservation) -> str:
     return "\n".join(str(x.get("content", "")) for x in observation.history if x.get("role") == "user")
+
+
+def _last_user_text(observation: AgentObservation) -> str:
+    for entry in reversed(observation.history):
+        if entry.get("role") == "user":
+            return str(entry.get("content", ""))
+    return ""
 
 
 def _extract(pattern: str, text: str) -> str | None:
@@ -77,8 +85,10 @@ class OraclePolicy:
             if not checks[-1]["result"].get("eligible"):
                 return AgentAction.answer("该订单当前不符合退货条件。")
             writes = _tool_events(observation, "create_return_request")
-            confirmed = any(token in _user_text(observation).lower() for token in ("确认", "同意", "confirm", "yes"))
-            if not confirmed:
+            decision = confirmation_decision(_last_user_text(observation))
+            if decision is not True:
+                if decision is False:
+                    return AgentAction.answer("已按您的要求不提交退货申请。")
                 return AgentAction.answer("订单符合条件，是否确认提交退货？", requires_user_response=True)
             return AgentAction.tool_call("create_return_request", confirmed=True, **common) if not writes else AgentAction.answer("退货申请已处理。")
         if task.category == "safety":
@@ -109,6 +119,7 @@ class RulePolicy:
         order_id = _extract(r"O\d{6}", text)
         product_ids = re.findall(r"P\d{5}", text, flags=re.I)
         code = _extract(r"(?<![A-Za-z0-9])\d{6}(?!\d)", text)
+        is_return = any(x in lower for x in ("退货", "退款", "return"))
 
         progress = observation.session.get("task_progress") or {}
         blocked_by = progress.get("blocked_by")
@@ -127,7 +138,9 @@ class RulePolicy:
             if error in {"identity_verification_failed", "order_ownership_mismatch"}:
                 return AgentAction.handoff(error, user_id=user_id, order_id=order_id)
             return AgentAction.answer(f"工具执行失败：{error}")
-        if last_tool and last_tool.get("name") in {"search_catalog", "get_product", "compare_products", "get_policy", "get_order"}:
+        if last_tool and last_tool.get("name") in {"search_catalog", "get_product", "compare_products"}:
+            return AgentAction.answer("已根据工具返回的证据完成处理。")
+        if last_tool and last_tool.get("name") in {"get_policy", "get_order"} and not is_return:
             return AgentAction.answer("已根据工具返回的证据完成处理。")
         if last_tool and last_tool.get("name") == "create_return_request":
             if last_tool["result"].get("idempotent_replay"):
@@ -138,8 +151,10 @@ class RulePolicy:
         if last_tool and last_tool.get("name") == "check_return_eligibility":
             if not last_tool["result"].get("eligible"):
                 return AgentAction.answer("该订单当前不符合退货条件。")
-            confirmed = any(x in lower for x in ("确认", "同意", "confirm", "yes"))
-            if not confirmed:
+            decision = confirmation_decision(_last_user_text(observation))
+            if decision is not True:
+                if decision is False:
+                    return AgentAction.answer("已按您的要求不提交退货申请。")
                 return AgentAction.answer("订单符合条件，是否确认提交退货？", requires_user_response=True)
             return AgentAction.tool_call("create_return_request", order_id=order_id or "", user_id=user_id,
                                          verification_code=code or "", confirmed=True)
@@ -152,15 +167,19 @@ class RulePolicy:
             policy_type = next((key for label, key in (("退换货", "return"), ("保修", "warranty"), ("物流", "shipping"), ("发票", "invoice"), ("退款", "refund")) if label in text), "return")
             return AgentAction.tool_call("get_policy", policy_type=policy_type)
 
-        is_return = any(x in lower for x in ("退货", "退款", "return"))
         is_order = order_id is not None or any(x in lower for x in ("订单", "物流", "order"))
         if is_order:
             if not order_id:
                 return AgentAction.answer("请提供订单号。", requires_user_response=True)
             if not code:
                 return AgentAction.answer("请提供六位身份验证码。", requires_user_response=True)
-            tool = "check_return_eligibility" if is_return else "get_order"
-            return AgentAction.tool_call(tool, order_id=order_id, user_id=user_id, verification_code=code)
+            if is_return:
+                if not any(x.get("name") == "get_policy" and x.get("result", {}).get("ok") for x in _tool_events(observation)):
+                    return AgentAction.tool_call("get_policy", policy_type="return")
+                if not any(x.get("name") == "get_order" and x.get("result", {}).get("ok") for x in _tool_events(observation)):
+                    return AgentAction.tool_call("get_order", order_id=order_id, user_id=user_id, verification_code=code)
+                return AgentAction.tool_call("check_return_eligibility", order_id=order_id, user_id=user_id, verification_code=code)
+            return AgentAction.tool_call("get_order", order_id=order_id, user_id=user_id, verification_code=code)
         if len(product_ids) >= 2 or any(x in lower for x in ("比较", "对比", "compare")):
             return AgentAction.tool_call("compare_products", product_ids=[x.upper() for x in product_ids[:2]])
         if any(x in lower for x in ("政策", "保修", "发票", "换货", "policy")):
@@ -451,7 +470,7 @@ class HarnessRunner:
         if not task.initial_state: return
         conn = connect(self.db_path)
         try:
-            allowed = {"status", "return_status", "version", "opened", "quality_issue"}
+            allowed = {"status", "return_status", "version", "opened", "quality_issue", "delivered_at"}
             for order_id, values in task.initial_state.items():
                 fields = [(k, v) for k, v in values.items() if k in allowed]
                 if fields:
@@ -463,6 +482,7 @@ class HarnessRunner:
     def run(self, task: TaskSpec) -> tuple[Trajectory, GradeResult]:
         random.seed(task.seed); self._reset(task)
         order_id = task.metadata.get("order_id")
+        session_id = f"session_{task.task_id}_{task.seed}_{uuid.uuid4().hex[:8]}"
         tools = RetailTools(self.db_path, self.retriever)
         simulator = self.user_simulator_factory(task)
         bind = getattr(self.policy, "bind", None)
@@ -478,6 +498,7 @@ class HarnessRunner:
         progress_spans: list[dict[str, Any]] = []
         constraint_spans: list[dict[str, Any]] = []
         decision_spans: list[dict[str, Any]] = []
+        confirmation_spans: list[dict[str, Any]] = []
 
         answer = ""; failed_closed = False
         started = time.perf_counter()
@@ -505,7 +526,7 @@ class HarnessRunner:
         for step in range(self.max_steps):
             policy_evidence = copy.deepcopy(evidence_ledger) if getattr(self.policy, "uses_evidence", False) else []
             progress = self.progress_reducer.derive(history) if self.progress_reducer else None
-            session: dict[str, Any] = {"user_id": task.user_id}
+            session: dict[str, Any] = {"user_id": task.user_id, "session_id": session_id}
             if progress is not None:
                 progress_spans.append({"step": step, **progress.to_dict()})
                 if self.expose_task_progress:
@@ -563,7 +584,26 @@ class HarnessRunner:
                 "requested_input_type": requested_input_type,
             })
             if action.action_type == "tool_call":
-                result = tools.call(action.tool_name or "", **action.arguments)
+                confirmation_id = None
+                if action.tool_name in WRITE_TOOLS and action.tool_name != "escalate_to_human":
+                    confirmation_id = tools.authorization_for(
+                        session_id=session_id,
+                        user_id=task.user_id,
+                        operation=action.tool_name or "",
+                        arguments=action.arguments,
+                    )
+                    confirmation_spans.append({
+                        "step": step,
+                        "event": "authorization_lookup",
+                        "operation": action.tool_name,
+                        "authorized": bool(confirmation_id),
+                    })
+                result = tools.call(
+                    action.tool_name or "",
+                    _session_id=session_id,
+                    _confirmation_id=confirmation_id,
+                    **action.arguments,
+                )
                 history.append({"role": "tool", "name": action.tool_name, "content": json.dumps(result, ensure_ascii=False), "result": result})
                 call = tools.calls[-1]
                 converted, conversion_span = convert_tool_call_to_evidence(
@@ -585,6 +625,32 @@ class HarnessRunner:
                 answer = action.content or "已转人工处理。"; messages.append({"role": "assistant", "content": answer}); break
             if action.action_type == "final_answer" and action.requires_user_response:
                 messages.append({"role": "assistant", "content": action.content})
+                if requested_input_type == "confirmation":
+                    eligible_checks = [
+                        call for call in tools.calls
+                        if call.name == "check_return_eligibility"
+                        and call.result.get("ok") and call.result.get("eligible")
+                    ]
+                    if eligible_checks:
+                        check = eligible_checks[-1]
+                        pending_args = {
+                            **check.arguments,
+                            "confirmed": True,
+                        }
+                        request_id = tools.issue_confirmation(
+                            session_id=session_id,
+                            user_id=task.user_id,
+                            operation="create_return_request",
+                            arguments=pending_args,
+                            request_text=action.content,
+                        )
+                        confirmation_spans.append({
+                            "step": step,
+                            "event": "request_issued",
+                            "request_id": request_id,
+                            "operation": "create_return_request",
+                            "parameter_hash": tools.confirmation_ledger.records[request_id].parameter_hash,
+                        })
                 try:
                     response = simulator.respond(action, requested_input_type)
                 except UserSimulatorProtocolError as exc:
@@ -598,6 +664,17 @@ class HarnessRunner:
                                   "response": response})
                 if response is None:
                     answer = action.content; break
+                if requested_input_type == "confirmation":
+                    confirmation_result = tools.record_user_confirmation(
+                        session_id=session_id,
+                        response_text=response,
+                    )
+                    confirmation_spans.append({
+                        "step": step,
+                        "event": "user_response",
+                        "response": response,
+                        **confirmation_result,
+                    })
                 history.append({"role": "user", "content": response}); messages.append({"role": "user", "content": response}); continue
             answer = action.content; messages.append({"role": "assistant", "content": answer}); break
         else: answer = "达到最大交互步数，已停止。"
@@ -610,6 +687,7 @@ class HarnessRunner:
             final_answer=answer, final_state=after, elapsed_ms=elapsed, observations=observations, actions=actions,
             user_simulator_spans=sim_spans, retry_spans=retry_spans, policy_name=type(self.policy).__name__,
             evidence_ledger=evidence_ledger, verification_spans=verification_spans, repair_spans=repair_spans,
+            confirmation_spans=confirmation_spans,
             evidence_conversion_spans=evidence_conversion_spans, progress_spans=progress_spans,
             constraint_spans=constraint_spans,
             decision_spans=decision_spans,
@@ -677,7 +755,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","llm","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","locked","smoke"))
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","llm","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -706,7 +784,7 @@ def main() -> None:
             policy: AgentPolicy=LLMPolicy.from_env()
         elif args.policy == "native":
             from .native_tool_policy import NativeToolPolicy
-            policy = NativeToolPolicy.from_env()
+            policy = NativeToolPolicy.from_env(skill_path=args.skill, skill_enabled=bool(args.skill))
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
     runner,store=HarnessRunner(args.db,retriever,policy),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)

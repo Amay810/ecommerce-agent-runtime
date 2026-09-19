@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .domain import ToolCall
+from .confirmation import ConfirmationLedger
 from .retail_protocol import RETAIL_WRITE_TOOLS
-from . import orders
+from . import config, orders
 
 
 READ_TOOLS = {
@@ -102,6 +103,8 @@ class RetailTools:
         self.db_path = Path(db_path)
         self.retriever = retriever
         self.today = today
+        self.confirmation_ledger = ConfirmationLedger()
+        self._active_call_context: dict[str, Any] | None = None
         self.calls: list[ToolCall] = []
         self.guardrails: list[dict[str, Any]] = []
         self._registry: dict[str, Callable[..., dict]] = {
@@ -130,6 +133,65 @@ class RetailTools:
         self.guardrails.append(payload)
         return {"ok": False, "changed": False, "error": reason, **extra}
 
+    def issue_confirmation(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        operation: str,
+        arguments: dict[str, Any],
+        request_text: str,
+    ) -> str:
+        """Create a pending request from a trusted interaction layer."""
+
+        return self.confirmation_ledger.issue(
+            session_id=session_id,
+            user_id=user_id,
+            operation=operation,
+            parameters=arguments,
+            request_text=request_text,
+        )
+
+    def record_user_confirmation(self, *, session_id: str, response_text: str) -> dict[str, Any]:
+        """Record the actual user response; model text cannot call this method."""
+
+        return self.confirmation_ledger.respond(
+            session_id=session_id,
+            response_text=response_text,
+        )
+
+    def authorization_for(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        operation: str,
+        arguments: dict[str, Any],
+    ) -> str | None:
+        return self.confirmation_ledger.authorization_for(
+            session_id=session_id,
+            user_id=user_id,
+            operation=operation,
+            parameters=arguments,
+        )
+
+    def _require_trusted_confirmation(
+        self, name: str, arguments: dict[str, Any], confirmed: bool
+    ) -> dict[str, Any] | None:
+        if name not in (WRITE_TOOLS - {"escalate_to_human"}):
+            return None
+        context = self._active_call_context or {}
+        valid = bool(confirmed) and self.confirmation_ledger.validate_authorization(
+            authorization_id=context.get("confirmation_id"),
+            session_id=context.get("session_id"),
+            user_id=arguments.get("user_id"),
+            operation=name,
+            parameters=arguments,
+        )
+        if valid:
+            return None
+        return self._block(name, "confirmation_required", order_id=arguments.get("order_id"))
+
     def _identity_guard(self, name: str, arguments: dict[str, Any]) -> dict | None:
         """Refuse an order-scoped tool that arrives without a usable code.
 
@@ -148,7 +210,14 @@ class RetailTools:
                                 "supplied": code})
         return {"ok": False, "changed": False, "error": "verification_code_required"}
 
-    def call(self, name: str, **arguments: Any) -> dict:
+    def call(
+        self,
+        name: str,
+        *,
+        _session_id: str | None = None,
+        _confirmation_id: str | None = None,
+        **arguments: Any,
+    ) -> dict:
         started = time.perf_counter()
         stamp = datetime.now(timezone.utc).isoformat()
         call_id = hashlib.sha1(f"{name}:{len(self.calls)}:{arguments}".encode()).hexdigest()[:12]
@@ -161,9 +230,15 @@ class RetailTools:
         try:
             if name not in self._registry:
                 raise ValueError(f"unknown tool: {name}")
+            self._active_call_context = {
+                "session_id": _session_id,
+                "confirmation_id": _confirmation_id,
+            }
             result = self._registry[name](**arguments)
         except Exception as exc:
             error, result = str(exc), {"ok": False, "error": str(exc)}
+        finally:
+            self._active_call_context = None
         self.calls.append(ToolCall(name, arguments, call_id, result, stamp, (time.perf_counter() - started) * 1000, error))
         return result
 
@@ -199,11 +274,31 @@ class RetailTools:
         return {"ok": all(p["ok"] for p in products), "products": products}
 
     def get_policy(self, policy_type: str) -> dict:
-        if self.retriever is None:
-            return {"ok": False, "error": "retriever_not_configured"}
         category = POLICY_ALIASES.get(policy_type)
         if category is None:
             return {"ok": False, "error": "unknown_policy_type"}
+        if self.retriever is None:
+            # Keep the closed return workflow runnable on CPU without silently
+            # inventing policy text. The checked-in policy JSONL is the frozen
+            # source used when no retrieval index is configured.
+            try:
+                rows = [
+                    json.loads(line)
+                    for line in config.POLICY_DATA_PATH.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            except (OSError, json.JSONDecodeError):
+                rows = []
+            policies = [
+                {
+                    "doc_id": f"policy:{row.get('id')}",
+                    "title": row.get("title", ""),
+                    "text": row.get("content", ""),
+                }
+                for row in rows
+                if row.get("policy_type") == category
+            ]
+            return {"ok": bool(policies), "policies": policies}
         chunks = self.retriever.search(category, top_k=3, source_type="policy", category=category)
         return {"ok": bool(chunks), "policies": [{"doc_id": c["doc_id"], "title": c["title"], "text": c["text"]} for c in chunks]}
 
@@ -260,11 +355,17 @@ class RetailTools:
 
     def create_return_request(self, order_id: str, user_id: str, verification_code: str, confirmed: bool) -> dict:
         eligibility = self.check_return_eligibility(order_id, user_id, verification_code)
-        if not eligibility.get("ok") or not eligibility.get("eligible") or not confirmed:
+        if not eligibility.get("ok") or not eligibility.get("eligible"):
             reason = eligibility.get("error") or eligibility.get("reason") or "confirmation_required"
-            if eligibility.get("eligible") and not confirmed:
-                reason = "confirmation_required"
             return self._block("create_return_request", reason, order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "create_return_request",
+            {"order_id": order_id, "user_id": user_id,
+             "verification_code": verification_code, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         request_id = self._return_request_id(order_id)
         conn = orders.connect(self.db_path)
         try:
@@ -313,8 +414,14 @@ class RetailTools:
             return self._block("cancel_pending_order", error, order_id=order_id)
         if reason not in CANCEL_REASONS:
             return self._block("cancel_pending_order", "invalid_cancel_reason", order_id=order_id)
-        if not confirmed:
-            return self._block("cancel_pending_order", "confirmation_required", order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "cancel_pending_order",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "reason": reason, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         if order["status"] == "cancelled":
             return {
                 "ok": True,
@@ -363,8 +470,15 @@ class RetailTools:
         order, error = self._verified_order(order_id, user_id, verification_code)
         if error:
             return self._block("modify_pending_order_address", error, order_id=order_id)
-        if not confirmed:
-            return self._block("modify_pending_order_address", "confirmation_required", order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "modify_pending_order_address",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "address1": address1, "address2": address2, "city": city, "state": state,
+             "country": country, "zip": zip, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         if order["status"] != "pending":
             return self._block(
                 "modify_pending_order_address", "order_not_pending", order_id=order_id, status=order["status"]
@@ -413,8 +527,15 @@ class RetailTools:
         order, error = self._verified_order(order_id, user_id, verification_code)
         if error:
             return self._block("modify_pending_order_items", error, order_id=order_id)
-        if not confirmed:
-            return self._block("modify_pending_order_items", "confirmation_required", order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "modify_pending_order_items",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "item_ids": item_ids, "new_item_ids": new_item_ids,
+             "payment_method_id": payment_method_id, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         if order["status"] != "pending":
             return self._block(
                 "modify_pending_order_items", "order_not_pending", order_id=order_id, status=order["status"]
@@ -473,8 +594,14 @@ class RetailTools:
         order, error = self._verified_order(order_id, user_id, verification_code)
         if error:
             return self._block("modify_pending_order_payment", error, order_id=order_id)
-        if not confirmed:
-            return self._block("modify_pending_order_payment", "confirmation_required", order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "modify_pending_order_payment",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "payment_method_id": payment_method_id, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         if order["status"] != "pending":
             return self._block(
                 "modify_pending_order_payment", "order_not_pending", order_id=order_id, status=order["status"]
@@ -525,8 +652,15 @@ class RetailTools:
         user, error = self._verified_user(user_id, verification_code)
         if error:
             return self._block("modify_user_address", error, user_id=user_id)
-        if not confirmed:
-            return self._block("modify_user_address", "confirmation_required", user_id=user_id)
+        blocked = self._require_trusted_confirmation(
+            "modify_user_address",
+            {"user_id": user_id, "verification_code": verification_code,
+             "address1": address1, "address2": address2, "city": city, "state": state,
+             "country": country, "zip": zip, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         address = _address_payload(address1, address2, city, state, country, zip)
         encoded = json.dumps(address, ensure_ascii=False, sort_keys=True)
         if user.get("address") == encoded:
@@ -561,11 +695,17 @@ class RetailTools:
         confirmed: bool,
     ) -> dict:
         eligibility = self.check_return_eligibility(order_id, user_id, verification_code)
-        if not eligibility.get("ok") or not eligibility.get("eligible") or not confirmed:
+        if not eligibility.get("ok") or not eligibility.get("eligible"):
             reason = eligibility.get("error") or eligibility.get("reason") or "confirmation_required"
-            if eligibility.get("eligible") and not confirmed:
-                reason = "confirmation_required"
             return self._block("return_delivered_order_items", reason, order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "return_delivered_order_items",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "item_ids": item_ids, "payment_method_id": payment_method_id, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         order = eligibility["order"]
         current_items = _parse_json_list(order.get("item_ids")) or [order["product_id"]]
         if not item_ids:
@@ -631,8 +771,15 @@ class RetailTools:
         order, error = self._verified_order(order_id, user_id, verification_code)
         if error:
             return self._block("exchange_delivered_order_items", error, order_id=order_id)
-        if not confirmed:
-            return self._block("exchange_delivered_order_items", "confirmation_required", order_id=order_id)
+        blocked = self._require_trusted_confirmation(
+            "exchange_delivered_order_items",
+            {"order_id": order_id, "user_id": user_id, "verification_code": verification_code,
+             "item_ids": item_ids, "new_item_ids": new_item_ids,
+             "payment_method_id": payment_method_id, "confirmed": confirmed},
+            confirmed,
+        )
+        if blocked is not None:
+            return blocked
         if order["status"] != "delivered":
             return self._block(
                 "exchange_delivered_order_items",

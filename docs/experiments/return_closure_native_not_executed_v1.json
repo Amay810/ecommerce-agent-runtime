@@ -1,0 +1,14 @@
+{
+  "experiment": "return-closure-skill-trial-v1",
+  "status": "not_executed",
+  "model_experiment": true,
+  "tasks": "ecommerce_rag/data/return_closure_tasks.jsonl",
+  "arms": {
+    "A": {
+      "arm": "A",
+      "status": "not_executed",
+      "reason": "no_model_service_configured",
+      "error": "ARAG_LLM_API_KEY is required for the native tool backend"
+    }
+  }
+}
