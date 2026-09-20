@@ -21,6 +21,11 @@ python -m ecommerce_rag.harness run \
 python -m pytest tests -q
 ```
 
+The frozen engineering baseline at commit `61e3b20` recorded `283 passed`.
+The final closeout count for the versioned return-closure scorer is recorded in
+`docs/experiments/return_closure_freeze_v2.json`; do not substitute an older
+report's count when reproducing a newer commit.
+
 For the native Qwen experiment, the endpoint is an OpenAI-compatible wire
 protocol only; it does not imply an OpenAI-hosted model. Set the endpoint and
 credentials explicitly, for example:
@@ -82,6 +87,17 @@ python -m scripts.freeze_return_closure \
   --output docs/experiments/return_closure_freeze_v1.json
 ```
 
+`return_closure_freeze_v1.json` is a historical artifact and is not rewritten.
+New return experiments use the versioned v2 contract and a separate manifest:
+
+```bash
+python -m scripts.freeze_return_closure \
+  --tasks ecommerce_rag/data/return_closure_tasks.jsonl \
+  --scoring-version return-closure-v2 \
+  --test-result "290 passed in 6.49s" \
+  --output docs/experiments/return_closure_freeze_v2.json
+```
+
 The four business cases are covered in the 24-task file (8 exploration, 8
 validation, 8 locked): eligible three-day unopened/no-quality return, expired
 ten-day return, explicit confirmation refusal, and idempotent duplicate.
@@ -102,7 +118,25 @@ python -m scripts.propose_skill_patch \
 The same command accepts `--split smoke` when used with
 `ecommerce_rag/data/return_closure_smoke.jsonl`. Rule/Oracle runs are
 deterministic offline checks and must not be reported as model or Skill-effect
-measurements.
+measurements. The trial script defaults to `--scoring-version
+return-closure-v2`; pass `return-closure-v1` only to reproduce historical
+reports.
+
+The v2 return contract requires a successful non-empty policy result and a
+successful eligibility result containing the order facts and `eligible` field.
+`get_order` is permitted but is not required when eligibility already returns
+those facts; no exact tool order is required. A successful write additionally
+requires a `request_issued` confirmation event followed by a positive user
+response. A content-only model message remains terminal under the strict
+protocol: the runtime does not convert it into `request_user_input`. Such a
+trace is classified as `interaction-protocol-failure` when it visibly asks for
+confirmation or missing information.
+
+Promotion compares answer quality as well as operation success. Hard
+verification failure, wrong answer facts, unsupported high-risk claims,
+contradictions, or omitted required facts block promotion. Missing citation
+binding remains diagnostic in this contract unless it also produces one of
+those blocking answer defects.
 
 For a configured OpenAI-compatible native tool service, run A/B/C with the
 same model settings and task seeds. The Skill is enabled only when passed:

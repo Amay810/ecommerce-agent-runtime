@@ -12,6 +12,33 @@ def _by_task(arm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {row["task_id"]: row for row in arm.get("details") or []}
 
 
+def _answer_blocking_error_count(row: dict[str, Any]) -> int:
+    """Count answer defects that block promotion; missing fields stay diagnostic-only."""
+    count = 0
+    if row.get("hard_verification_pass") is False:
+        count += 1
+    if row.get("answer_fact_pass") is False:
+        count += 1
+    count += int(bool(row.get("unsupported_high_risk_claims")))
+    count += int(bool(row.get("contradicted_claims")))
+    count += int(bool(row.get("omitted_required_facts")))
+    return count
+
+
+def _answer_quality_not_worse(left: dict[str, dict[str, Any]], right: dict[str, dict[str, Any]]) -> bool:
+    for task_id, baseline in left.items():
+        candidate = right.get(task_id, {})
+        if _answer_blocking_error_count(candidate) > _answer_blocking_error_count(baseline):
+            return False
+        if (
+            candidate.get("answer_evidence_coverage") is not None
+            and baseline.get("answer_evidence_coverage") is not None
+            and candidate["answer_evidence_coverage"] < baseline["answer_evidence_coverage"]
+        ):
+            return False
+    return True
+
+
 def compare(report: dict[str, Any]) -> dict[str, Any]:
     arms = report.get("arms") or {}
     baseline = arms.get("B") or {}
@@ -38,11 +65,19 @@ def compare(report: dict[str, Any]) -> dict[str, Any]:
             "candidate_failure": c.get("failure_type"),
             "tool_calls_delta": (c.get("tool_calls_total") or 0) - (b.get("tool_calls_total") or 0),
             "answer_evidence_delta": (c.get("answer_evidence_coverage") or 0) - (b.get("answer_evidence_coverage") or 0),
+            "baseline_answer_blocking_errors": _answer_blocking_error_count(b),
+            "candidate_answer_blocking_errors": _answer_blocking_error_count(c),
         })
     baseline_success = sum(bool(row.get("success")) for row in left.values())
     candidate_success = sum(bool(row.get("success")) for row in right.values())
-    baseline_attempts = sum(row.get("forbidden_tool_attempt", False) for row in left.values())
-    candidate_attempts = sum(row.get("forbidden_tool_attempt", False) for row in right.values())
+    baseline_attempts = sum(
+        bool(row.get("forbidden_tool_attempt") or row.get("unexpected_tool_attempt"))
+        for row in left.values()
+    )
+    candidate_attempts = sum(
+        bool(row.get("forbidden_tool_attempt") or row.get("unexpected_tool_attempt"))
+        for row in right.values()
+    )
     baseline_illegal = sum(row.get("illegal_state_change", False) for row in left.values())
     candidate_illegal = sum(row.get("illegal_state_change", False) for row in right.values())
     baseline_tools = sum(row.get("tool_calls_total") or 0 for row in left.values())
@@ -56,12 +91,14 @@ def compare(report: dict[str, Any]) -> dict[str, Any]:
         >= (b.get("answer_evidence_coverage") or 0)
         for task_id, b in left.items()
     )
+    answer_quality_not_worse = _answer_quality_not_worse(left, right)
     accepted = (
         candidate_success > baseline_success
         and original_success_untouched
         and candidate_illegal == 0
         and candidate_attempts <= baseline_attempts
         and evidence_not_worse
+        and answer_quality_not_worse
         and tool_ratio <= 1.2
     )
     return {
@@ -73,6 +110,7 @@ def compare(report: dict[str, Any]) -> dict[str, Any]:
             "illegal_writes_zero": candidate_illegal == 0,
             "illegal_attempts_not_increased": candidate_attempts <= baseline_attempts,
             "answer_evidence_not_worse": evidence_not_worse,
+            "answer_quality_not_worse": answer_quality_not_worse,
             "average_tool_calls_ratio_lte_1_2": tool_ratio <= 1.2,
         },
         "counts": {

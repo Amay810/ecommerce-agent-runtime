@@ -60,18 +60,20 @@ MCP 工具边界、原生/旧版模型适配器、SQLite 工具、检索、Harne
 - 真实 Qwen 轨迹中，模型在确认前成功调用了身份验证和资格工具，但随后用普通文本询问确认，
   没有调用 `request_user_input(input_type=confirmation)`。当前协议把 content-only action 当作最终回答，
   因而 Harness 不应擅自把普通文本升级为授权交互；该轨迹应归为模型策略/协议遵循失败，而不是静默修复成合法写入。
+  v2 scorer 只在事后把这类可识别的确认/补充信息请求标为 `interaction-protocol-failure`，不改变运行时协议。
   这解释了此前 0/4，而不证明 Skill 有效性。
-- `TaskSpec.allowed_tools` 实际按“全量期望工具集合”计算 recall；若要支持“get_order 或
-  check_return_eligibility 二选一”等替代组，需要单独迁移字段、任务文件和 scorer 版本，不能在本轮悄然放宽评分。
+- 新的 `return-closure-v2` 评分要求政策证据、资格检查返回的订单事实和有效确认；`get_order` 在资格工具已返回同一必要事实时是可选工具，
+  不强制唯一顺序。旧 `TaskSpec.allowed_tools` 口径和历史报告保留不变。
 - `evidence.py` 将引用缺失和部分 unsupported facts 作为诊断项，hard verification 主要拦截冲突/非法引用。
   这是一项已冻结的评分设计选择，不在本轮改动；报告必须同时看 `answer_fact_pass` 与 citation diagnostics。
-- 本轮没有运行真实模型、Skill A/B、validation 或 locked；CPU 279 passed 只证明工程契约和离线夹具。
+- 本轮没有运行真实模型、Skill A/B、validation 或 locked；静态审查冻结时的 CPU 证据是 283 passed，
+  本次 v2 收尾的最终测试数以 `docs/experiments/return_closure_freeze_v2.json` 为准。
 
 ## 验证命令与结果
 
 ```text
 python -m compileall -q ecommerce_rag scripts tests       PASS
-python -m pytest -q                                      279 passed
+python -m pytest -q                                      283 passed (static-review baseline)
 python -m scripts.run_skill_trial --policy rule \
   --tasks ecommerce_rag/data/return_closure_smoke.jsonl \
   --split smoke --arm A ...                              4/4 offline pass

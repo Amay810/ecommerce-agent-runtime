@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,23 @@ def _run_arm(
     }
 
 
+def _apply_scoring_version(tasks: list[Any], scoring_version: str) -> list[Any]:
+    if scoring_version == "return-closure-v1":
+        return tasks
+    return [
+        replace(
+            task,
+            scoring_version="return-closure-v2",
+            metadata={
+                **task.metadata,
+                "return_required_tools": ["get_policy", "check_return_eligibility"],
+                "return_write_expected": "create_return_request" in task.allowed_tools,
+            },
+        )
+        for task in tasks
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tasks", type=Path, default=Path("ecommerce_rag/data/return_closure_tasks.jsonl"))
@@ -98,11 +116,17 @@ def main() -> None:
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--arm", choices=("A", "B", "C", "all"), default="all")
     parser.add_argument("--split", choices=("smoke", "exploration", "validation", "locked"))
+    parser.add_argument(
+        "--scoring-version",
+        choices=("return-closure-v1", "return-closure-v2"),
+        default="return-closure-v2",
+    )
     parser.add_argument("--max-steps", type=int, default=8)
     args = parser.parse_args()
     tasks = load_tasks(args.tasks)
     if args.split:
         tasks = [task for task in tasks if task.split == args.split]
+    tasks = _apply_scoring_version(tasks, args.scoring_version)
     if not tasks:
         raise SystemExit("no tasks selected")
     # Without a real failure-derived candidate, an offline run may still
@@ -121,7 +145,8 @@ def main() -> None:
         from ecommerce_rag.hybrid_retriever import HybridRetriever
         index = HybridRetriever(Path(os.environ["ERAG_RETURN_CLOSURE_INDEX"]))
     report = {
-        "experiment": "return-closure-skill-trial-v1",
+        "experiment": "return-closure-skill-trial-v2" if args.scoring_version == "return-closure-v2" else "return-closure-skill-trial-v1",
+        "scoring_version": args.scoring_version,
         "status": "executed",
         "model_experiment": args.policy == "native",
         "tasks": str(args.tasks),

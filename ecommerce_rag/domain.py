@@ -36,6 +36,9 @@ class TaskSpec:
     # AgentObservation or prompt.
     answer_expectations: dict[str, Any] = field(default_factory=dict)
     expected_tool_sequence: list[str] = field(default_factory=list)
+    # Versioned scoring contract.  The default preserves historical task/report
+    # semantics; return-closure-v2 is opt-in for the new experiment set.
+    scoring_version: str = "harness-v1"
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,11 @@ class GradeResult:
     raw_observed_tool_sequence: list[str] = field(default_factory=list)
     successful_tool_sequence: list[str] = field(default_factory=list)
     failed_or_empty_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    scoring_version: str = "harness-v1"
+    required_facts_pass: bool = True
+    confirmation_protocol_pass: bool = True
+    unexpected_tool_attempt: bool = False
+    interaction_protocol_failure: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

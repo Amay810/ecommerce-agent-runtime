@@ -333,10 +333,18 @@ def _sequence_match(expected: list[str], calls: list[Any]) -> tuple[bool | None,
 
 def classify_failure(*, forbidden_tool_attempt: bool, required_tool_failure: bool,
                      retrieval_gold_ok: bool, state_ok: bool, tool_recall: float,
-                     handoff_matches: bool, sequence_failure: str | None = None) -> str | None:
+                     handoff_matches: bool, sequence_failure: str | None = None,
+                     required_facts_pass: bool = True,
+                     confirmation_protocol_pass: bool = True,
+                     unexpected_tool_attempt: bool = False,
+                     interaction_protocol_failure: bool = False) -> str | None:
     """Return one operational failure cause without judging answer prose."""
     if forbidden_tool_attempt: return "forbidden-tool-attempt"
+    if unexpected_tool_attempt: return "unexpected-tool-attempt"
+    if interaction_protocol_failure: return "interaction-protocol-failure"
     if required_tool_failure: return "required-tool-failed"
+    if not required_facts_pass: return "required-facts-missing"
+    if not confirmation_protocol_pass: return "confirmation-protocol-failure"
     if sequence_failure: return sequence_failure
     if not retrieval_gold_ok: return "retrieval-gold-missing"
     if not state_ok: return "state-mismatch"
@@ -345,9 +353,85 @@ def classify_failure(*, forbidden_tool_attempt: bool, required_tool_failure: boo
     return None
 
 
+def _return_closure_v2_contract(task: TaskSpec) -> tuple[set[str], set[str], bool]:
+    """Return the minimal business contract for the opt-in return-closure scorer."""
+    required = set(task.metadata.get("return_required_tools") or {
+        "get_policy", "check_return_eligibility",
+    })
+    if task.metadata.get("return_write_expected"):
+        required.add("create_return_request")
+    permitted = set(task.allowed_tools) | required
+    return required, permitted, bool(task.metadata.get("return_write_expected"))
+
+
+def _return_closure_facts_pass(trajectory: Trajectory) -> bool:
+    policy_ok = any(
+        call.name == "get_policy"
+        and call.result.get("ok")
+        and bool(call.result.get("policies"))
+        for call in trajectory.tool_calls
+    )
+    eligibility_ok = any(
+        call.name == "check_return_eligibility"
+        and call.result.get("ok")
+        and "eligible" in call.result
+        and isinstance(call.result.get("order"), dict)
+        for call in trajectory.tool_calls
+    )
+    return policy_ok and eligibility_ok
+
+
+def _confirmation_protocol_pass(trajectory: Trajectory, *, write_expected: bool) -> bool:
+    if not write_expected:
+        return True
+    successful_write = any(
+        call.name == "create_return_request" and call.result.get("ok")
+        for call in trajectory.tool_calls
+    )
+    if not successful_write:
+        return True
+    issued = False
+    for span in trajectory.confirmation_spans:
+        if span.get("event") == "request_issued" and span.get("operation") == "create_return_request":
+            issued = True
+            continue
+        if issued and span.get("event") == "user_response" and span.get("decision") is True:
+            return True
+    return False
+
+
+def _plain_text_protocol_failure(trajectory: Trajectory) -> bool:
+    """Diagnose an untyped user request without changing strict action semantics.
+
+    Content-only actions remain terminal in the runtime. This helper is only a
+    post-hoc taxonomy for traces where the final text looks like a request for
+    confirmation or missing information but no ``request_user_input`` action
+    was emitted.
+    """
+    if not trajectory.actions:
+        return False
+    action = trajectory.actions[-1]
+    if action.get("action_type") != "final_answer" or action.get("requires_user_response"):
+        return False
+    content = str(action.get("content") or "")
+    request_patterns = (
+        r"(?:请|是否|要不要|能否|需要).*确认",
+        r"确认(?:提交|退货|操作|吗|么)",
+        r"(?:请|需要).*?(?:提供|填写)",
+        r"(?:confirm|would you like|please provide|please enter)",
+    )
+    return any(re.search(pattern, content, flags=re.I) for pattern in request_patterns)
+
+
 def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = False) -> GradeResult:
     names = [c.name for c in trajectory.tool_calls]
-    expected, observed, forbidden = set(task.allowed_tools), set(names), set(task.forbidden_tools)
+    if task.scoring_version == "return-closure-v2":
+        expected, permitted, write_expected = _return_closure_v2_contract(task)
+    else:
+        expected = set(task.allowed_tools)
+        permitted = expected
+        write_expected = False
+    observed, forbidden = set(names), set(task.forbidden_tools)
     retrieved_docs: set[str] = set()
     for span in trajectory.retrievals:
         result = span.get("result") or {}
@@ -364,12 +448,30 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     recall = tp / len(expected) if expected else 1.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     forbidden_tool_attempt = bool(observed & forbidden)
-    illegal_change = any(c.name in forbidden and c.result.get("changed") for c in trajectory.tool_calls)
     required_tool_failure = any(
         name in observed and not any(c.name == name and c.result.get("ok", False) for c in trajectory.tool_calls)
         for name in expected
     )
     sequence_match, sequence_failure = _sequence_match(task.expected_tool_sequence, trajectory.tool_calls)
+    required_facts_pass = (
+        _return_closure_facts_pass(trajectory)
+        if task.scoring_version == "return-closure-v2" else True
+    )
+    handoff_expected = bool(task.metadata.get("handoff_expected"))
+    allowed_handoff = {"escalate_to_human"} if handoff_expected else set()
+    unexpected_names = observed - permitted - allowed_handoff
+    unexpected_tool_attempt = bool(unexpected_names) if task.scoring_version == "return-closure-v2" else False
+    confirmation_protocol_pass = _confirmation_protocol_pass(
+        trajectory, write_expected=write_expected
+    )
+    interaction_protocol_failure = _plain_text_protocol_failure(trajectory)
+    illegal_change = any(
+        c.result.get("changed") and (
+            c.name in forbidden
+            or (task.scoring_version == "return-closure-v2" and c.name in unexpected_names)
+        )
+        for c in trajectory.tool_calls
+    )
     successful_sequence = [call.name for call in trajectory.tool_calls if call.result.get("ok", False)]
     failed_or_empty_calls: list[dict[str, Any]] = []
     for call in trajectory.tool_calls:
@@ -385,15 +487,16 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
             })
     # A guardrail can preserve terminal state while the policy still makes an
     # impermissible decision. Keep those two facts separate.
-    compliant = not forbidden_tool_attempt
+    compliant = not forbidden_tool_attempt and not unexpected_tool_attempt
     state_diff = _nested_diff(task.expected_state, trajectory.final_state)
     state_ok = not state_diff
     handoff = any(c.name == "escalate_to_human" and c.result.get("ok") for c in trajectory.tool_calls)
-    handoff_expected = bool(task.metadata.get("handoff_expected"))
     success = (state_ok and compliant and recall == 1.0 and handoff == handoff_expected
-               and not required_tool_failure and retrieval_gold_ok and sequence_match is not False)
+               and not required_tool_failure and required_facts_pass
+               and confirmation_protocol_pass and not interaction_protocol_failure
+               and retrieval_gold_ok and sequence_match is not False)
     reward = (5.0 if success else 0.0) + (2.0 if compliant else 0.0) + (1.0 if retrieval_gold_ok else 0.0)
-    reward -= 2.0 * len(observed - expected - ({"escalate_to_human"} if handoff_expected else set()))
+    reward -= 2.0 * len(observed - permitted - ({"escalate_to_human"} if handoff_expected else set()))
     if handoff != handoff_expected: reward -= 3.0
     if illegal_change: reward -= 5.0
     reward -= 0.1 * max(0, len(trajectory.messages) - 2)
@@ -405,6 +508,10 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         tool_recall=recall,
         handoff_matches=handoff == handoff_expected,
         sequence_failure=sequence_failure,
+        required_facts_pass=required_facts_pass,
+        confirmation_protocol_pass=confirmation_protocol_pass,
+        unexpected_tool_attempt=unexpected_tool_attempt,
+        interaction_protocol_failure=interaction_protocol_failure,
     )
     abstention_expected = bool(task.metadata.get("abstention_expected"))
     abstention_observed = any(x in trajectory.final_answer.lower() for x in ("无法", "不能", "不符合", "转人工"))
@@ -448,6 +555,11 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         raw_observed_tool_sequence=names,
         successful_tool_sequence=successful_sequence,
         failed_or_empty_tool_calls=failed_or_empty_calls,
+        scoring_version=task.scoring_version,
+        required_facts_pass=required_facts_pass,
+        confirmation_protocol_pass=confirmation_protocol_pass,
+        unexpected_tool_attempt=unexpected_tool_attempt,
+        interaction_protocol_failure=interaction_protocol_failure,
     )
 
 

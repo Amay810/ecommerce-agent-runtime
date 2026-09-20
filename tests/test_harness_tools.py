@@ -7,8 +7,8 @@ from pathlib import Path
 from ecommerce_rag.domain import TaskSpec
 from ecommerce_rag.domain import AgentAction
 from ecommerce_rag.domain import AgentObservation
-from ecommerce_rag.harness import HarnessRunner, RulePolicy, _sequence_match
-from ecommerce_rag.domain import ToolCall
+from ecommerce_rag.harness import HarnessRunner, RulePolicy, _sequence_match, grade
+from ecommerce_rag.domain import ToolCall, Trajectory
 from ecommerce_rag.orders import connect, seed_database
 from ecommerce_rag.tools import RetailTools
 
@@ -24,6 +24,96 @@ def _eligible(db):
 
 
 class HarnessToolTests(unittest.TestCase):
+ def _return_v2_task(self, *, write=True):
+    return TaskSpec(
+        "return_v2", "return", "U0001", "退货", 1,
+        allowed_tools=["get_policy", "get_order", "check_return_eligibility"]
+                     + (["create_return_request"] if write else []),
+        expected_state={"O000001": {"return_status": "requested" if write else None}},
+        metadata={
+            "return_required_tools": ["get_policy", "check_return_eligibility"],
+            "return_write_expected": write,
+        },
+        scoring_version="return-closure-v2",
+    )
+
+ def _return_v2_trajectory(self, *, include_policy=True, confirmed=True):
+    calls = []
+    if include_policy:
+        calls.append(ToolCall(
+            "get_policy", {}, "policy", {"ok": True, "policies": [{"doc_id": "policy:POL001"}]}, "now"
+        ))
+    calls.append(ToolCall(
+        "check_return_eligibility", {}, "eligibility",
+        {"ok": True, "eligible": True, "order": {"order_id": "O000001"}}, "now"
+    ))
+    calls.append(ToolCall(
+        "create_return_request", {}, "write",
+        {"ok": True, "changed": True}, "now"
+    ))
+    spans = ([
+        {"event": "request_issued", "operation": "create_return_request"},
+        {"event": "user_response", "decision": True},
+    ] if confirmed else [])
+    return Trajectory(
+        "tr-v2", "return_v2", 1, final_answer="已处理。",
+        final_state={"O000001": {"return_status": "requested"}},
+        tool_calls=calls, confirmation_spans=spans,
+    )
+
+ def test_return_v2_does_not_require_redundant_get_order(self):
+    result = grade(self._return_v2_task(), self._return_v2_trajectory())
+    self.assertTrue(result.success)
+    self.assertEqual(result.scoring_version, "return-closure-v2")
+    self.assertTrue(result.required_facts_pass)
+
+ def test_return_v2_requires_policy_and_eligibility_facts(self):
+    result = grade(
+        self._return_v2_task(),
+        self._return_v2_trajectory(include_policy=False),
+    )
+    self.assertFalse(result.success)
+    self.assertFalse(result.required_facts_pass)
+    self.assertEqual(result.failure_type, "required-facts-missing")
+
+ def test_return_v2_requires_confirmation_for_a_successful_write(self):
+    result = grade(
+        self._return_v2_task(),
+        self._return_v2_trajectory(confirmed=False),
+    )
+    self.assertFalse(result.success)
+    self.assertFalse(result.confirmation_protocol_pass)
+    self.assertEqual(result.failure_type, "confirmation-protocol-failure")
+
+ def test_return_v2_rejects_unexpected_write_attempt(self):
+    result = grade(self._return_v2_task(write=False), self._return_v2_trajectory())
+    self.assertFalse(result.success)
+    self.assertFalse(result.policy_compliant)
+    self.assertTrue(result.unexpected_tool_attempt)
+    self.assertEqual(result.failure_type, "unexpected-tool-attempt")
+
+ def test_plain_text_confirmation_request_is_classified_without_auto_correction(self):
+    task = self._return_v2_task(write=False)
+    trajectory = Trajectory(
+        "tr-protocol", "return_v2", 1,
+        final_answer="订单符合条件，是否确认提交？",
+        final_state={"O000001": {"return_status": None}},
+        tool_calls=[
+            ToolCall("get_policy", {}, "policy", {"ok": True, "policies": [{"doc_id": "policy:POL001"}]}, "now"),
+            ToolCall("check_return_eligibility", {}, "eligibility",
+                     {"ok": True, "eligible": True, "order": {"order_id": "O000001"}}, "now"),
+        ],
+        actions=[{
+            "action_type": "final_answer",
+            "content": "订单符合条件，是否确认提交？",
+            "requires_user_response": False,
+        }],
+    )
+    result = grade(task, trajectory)
+    self.assertFalse(result.success)
+    self.assertTrue(result.interaction_protocol_failure)
+    self.assertEqual(result.failure_type, "interaction-protocol-failure")
+
  def test_expected_tool_sequence_is_an_ordered_successful_subsequence(self):
     def call(name, ok=True):
         arguments = {"product_id": "P00001"} if name == "get_product" else {}
