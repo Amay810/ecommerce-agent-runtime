@@ -1,9 +1,3 @@
-sentence-transformers>=2.7.0
-rank_bm25>=0.2.2
-jieba>=0.42.1
+# Core runtime and numerical support; pytest is added by requirements-dev.txt.
 numpy
-datasets>=4.0.0
-faiss-cpu>=1.8.0; python_version < "3.13"
-transformers>=4.45.0
-accelerate>=0.34.0
 mcp>=1.27,<2

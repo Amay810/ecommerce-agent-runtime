@@ -1,35 +1,38 @@
 # Current status
 
-Last updated: 2026-09-07.
+This file is the single short status reference for the runtime checkout. The
+last implementation freeze before this cleanup was `0bb1952`; cleanup commits
+may be newer without changing the frozen scoring or model experiment results.
 
-The runtime baseline is frozen for the repository split. The supported local
-path is the deterministic harness plus CPU diagnostics; model-backed calls and
-external Retail evaluation remain environment-dependent.
+## Supported path
 
-## Supported surface
+- `HarnessRunner` + `RulePolicy` for deterministic CPU wiring and tests;
+- `NativeToolPolicy` with local Qwen3-4B-Instruct-2507 for the real-model path;
+- typed retail tools, SQLite state, identity/eligibility/confirmation checks,
+  idempotent writes, evidence and trajectory replay;
+- optional hybrid retrieval and optional MCP exposure through the same
+  `RetailTools.call` boundary;
+- optional external Tau3 integration under `scripts/` and `nscc/`.
 
-- typed retail tools with identity, eligibility, confirmation, and idempotency
-  checks;
-- hybrid retrieval over the checked-in sample and policy data;
-- native function-call adaptation through the runtime boundary;
-- trajectory replay, process auditing, and transaction-contract auditing;
-- optional external Retail evaluation through the pinned environment described
-  in `docs/data_source_manifest.json`.
+## Verified facts
 
-## Validation boundary
+- The latest CPU evidence is `291 passed, 2 warnings`; it includes MCP
+  contract tests and does not call a model or GPU.
+- The message-source fix is in `native_tool_policy.py`: non-empty history is
+  the only message source, tool results stay `tool`, repeated user text stays
+  a user event, and reconstructed tool-call/result IDs remain paired.
+- The fix's effect on Qwen action selection has not been measured. The next
+  allowed model check is a single-step before/after comparison using existing
+  exploration context and fixed parameters.
 
-The CPU suite does not download weights, start a model server, or contact the
-external evaluation environment. A successful local test run therefore proves
-runtime contracts and deterministic fixtures, not model quality or cluster
-throughput.
+## Experiment boundary
 
-The external Retail environment is pinned to commit
-`fc0055dc4e0a316c3f83133267fbd6faaa770992`. It must be checked out separately
-and its train/test split must remain frozen when an evaluation is run.
+The return-closure v2 freeze and deterministic reports under
+`docs/experiments/` are historical artifacts. The real Qwen exploration and
+the rejected Skill v1 validation were run before the message-source fix; do
+not reclassify them as post-fix results. Skill v0 remains active. No new
+validation or locked run belongs to this cleanup.
 
-## Next work
-
-Keep changes inside the runtime/tool/retrieval contracts and record any new
-evaluation artifact with its provider, model revision, task split, and exact
-command. Do not add generated datasets, checkpoints, or provider logs to this
-repository.
+Rule/Oracle runs are environment checks, not model or Skill-effect evidence.
+Credentials, model weights, retrieval indexes, caches, SQLite logs and raw
+trajectories stay outside Git.

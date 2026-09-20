@@ -1,7 +1,12 @@
 .venv/
+.env
+runtime.env
 __pycache__/
 *.pyc
 logs/
+*.db
+*.sqlite
+*.sqlite3
 .streamlit/
 ecommerce_rag/index/
 ecommerce_rag/index_*/

@@ -1,89 +1,54 @@
 # E-commerce Agent Runtime
 
-This repository contains the standalone runtime for a guarded e-commerce
-assistant. It owns retrieval, typed retail tools, transactional checks,
-trajectory recording, offline audits, and the local evaluation harness.
+一个带可信工具边界的电商 Agent 运行时：模型负责选择下一步动作，运行时负责身份、资格、确认、幂等写入、SQLite 状态、检索证据和轨迹记录。项目不把 Rule/Oracle 离线结果当成模型质量，也不包含训练流程。
 
-## Runtime chain
+## 从这里开始
 
-```text
-user request
-  -> observation and policy
-  -> retrieval or typed tool call
-  -> execution-time identity/eligibility/confirmation checks
-  -> SQLite state transition
-  -> evidence and trajectory audit
-```
+- 新 Agent：先读 [AGENTS.md](AGENTS.md)。
+- 当前状态、已知限制和实验归属：[docs/current_status.md](docs/current_status.md)。
+- 安装、CPU smoke、检索和 Qwen 服务：[docs/reproduction.md](docs/reproduction.md)。
+- 工具和授权边界：[docs/tools_and_safety.md](docs/tools_and_safety.md)。
 
-The model proposes the next action; the runtime validates the tool schema and
-protects write operations. The database, not the model, is the source of truth
-for order state.
-
-## Quick start: contract smoke
-
-The default smoke is intentionally limited to runtime wiring, typed tools,
-state mutation, and guardrails. It does not claim retrieval quality.
+## 快速开始（CPU）
 
 ```bash
 python -m venv .venv
-python -m pip install -r requirements-dev.txt
-python -m ecommerce_rag.harness run \
+.venv/bin/python -m pip install -r requirements-dev.txt
+mkdir -p logs
+.venv/bin/python -m ecommerce_rag.harness run \
   --tasks ecommerce_rag/data/harness_contract_smoke.jsonl \
-  --db logs/demo_agent.db \
-  --store logs/demo_trajectories.sqlite \
-  --output logs/demo_report.json \
-  --policy rule \
-  --repeats 1 \
-  --seed-db
-python -m pytest tests -q
+  --db logs/contract.db \
+  --store logs/contract_trajectories.sqlite \
+  --output logs/contract_report.json \
+  --policy rule --repeats 1 --seed-db
+.venv/bin/python -m pytest -q
 ```
 
-To exercise the retrieval scenarios, build the local index first and pass it
-to the broader smoke set:
+RulePolicy 是确定性 CPU wiring smoke，不是 Qwen 结果。最近一次完整 CPU 证据为 `291 passed, 2 warnings`；MCP 测试包含在内。
 
-```bash
-python -m scripts.build_retrieval_index --output-dir ecommerce_rag/index
-python -m ecommerce_rag.harness run \
-  --tasks ecommerce_rag/data/harness_smoke.jsonl \
-  --index ecommerce_rag/index \
-  --db logs/retrieval_agent.db \
-  --store logs/retrieval_trajectories.sqlite \
-  --output logs/retrieval_report.json \
-  --policy rule \
-  --repeats 1 \
-  --seed-db
+若 Python 没有 `venv`/`pip`，使用 conda 环境或 `uv venv .venv` 加
+`uv pip install --python .venv/bin/python -r requirements-dev.txt`。本机现有
+`.venv` 是 uv 管理环境。
+
+需要检索时再安装 `requirements-retrieval.txt` 并构建本地索引。需要旧 JSON 模型适配器的本地 Transformers 路径时安装 `requirements-llm.txt`；Amazon 数据准备脚本才需要 `requirements-data.txt`。
+
+## 运行路径
+
+```text
+HarnessRunner → NativeToolPolicy / LLMPolicy → AgentAction
+             → RetailTools.call → SQLite / retrieval / evidence
+             → UserSimulator or final answer → TrajectoryStore + scorer
 ```
 
-For a model-backed run, copy `.env.example`, configure the local or
-OpenAI-compatible endpoint, and use `--policy llm`. The harness records the
-trajectory so it can be replayed and audited without calling the model again.
+- 当前电商模型实验入口是 `NativeToolPolicy`，使用 OpenAI-compatible wire protocol；实际模型固定为本地 `Qwen3-4B-Instruct-2507`，不是 OpenAI 托管模型。
+- `LLMPolicy` 是保留的旧 JSON action envelope 兼容路径。
+- `ecommerce_rag/mcp_server.py` 是可选 MCP façade，业务调用仍汇合到 `RetailTools.call`。
+- `scripts/run_tau3_retail_v1.py` 和 `nscc/` 是外部 Tau3 环境适配，不属于本地 CPU smoke。
 
-## Main entry points
+## 当前限制
 
-- `ecommerce_rag/harness.py`: run, replay, and compare trajectories;
-- `ecommerce_rag/agent_runtime.py`: provider-facing function-call runtime;
-- `ecommerce_rag/tools.py`: retail tools and write guardrails;
-- `ecommerce_rag/retrieval_index.py` and `hybrid_retriever.py`: indexed facts;
-- `ecommerce_rag/process_audit.py`: trajectory/process checks;
-- `ecommerce_rag/diagnostics/transaction_audit.py`: CPU transaction contract audit;
-- `scripts/run_tau3_retail_v1.py`: optional external Retail evaluation wrapper;
-- `nscc/`: cluster serving and evaluation job files.
+消息来源修复已经通过 CPU 回归：非空 history 是唯一消息来源，工具结果保持 `tool` 角色，用户重复文本保留，tool-call/result ID 配对。修复是否改变真实 Qwen 的单步动作尚未验证。
 
-## Boundaries
+历史 return-closure 的确定性报告属于 Rule/Oracle 或 wiring 验证；真实 Qwen exploration 曾使用旧消息序列版本。候选 Skill v1 已拒绝，当前 Skill 为 v0；这些事实不能解释成 Skill 已有效，也不能改写历史报告。后续模型对照只使用 exploration 上下文，暂不运行 locked。
 
-This is a reproducible research runtime, not a production service. External
-Retail evaluation requires the separately pinned environment recorded in the
-data-source documents; its source tree is not bundled here. Retrieval data in
-this repository is for local research use and carries the restrictions recorded
-in `docs/data_source_manifest.json`.
-
-The repository does not claim model-training results. Offline reports are
-kept separate from the runtime path, and raw large artifacts are intentionally
-not part of this tree.
-
-The current reported Agent v2 operational metric is `303/360 = 84.17%`.
-The evidence JSON also retains `legacy_automatic_operational_success = 94.17%`
-for historical compatibility; it is not the current headline metric.
-
-See [reproduction](docs/reproduction.md), [current status](docs/current_status.md),
-[evaluation](docs/evaluation.md), and [transaction contracts](docs/transaction_contracts.md).
+凭据、模型权重、索引缓存、SQLite 日志和原始轨迹不提交仓库。需要浅克隆时使用 `git clone --depth 1 <repo-url>`；完整 Git 历史不会因删除当前文件而变小。
