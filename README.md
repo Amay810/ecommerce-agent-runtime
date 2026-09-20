@@ -13,8 +13,8 @@
 ## 快速开始（CPU）
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
 mkdir -p logs
 .venv/bin/python -m ecommerce_rag.harness run \
   --tasks ecommerce_rag/data/harness_contract_smoke.jsonl \
@@ -25,13 +25,12 @@ mkdir -p logs
 .venv/bin/python -m pytest -q
 ```
 
-RulePolicy 是确定性 CPU wiring smoke，不是 Qwen 结果。本机当前基线的完整 CPU 证据为 `291 passed`；此前 AutoDL CPU 运行记录为 `291 passed, 2 warnings`。两者都不调用真实模型或 GPU，环境归属见 `docs/reproduction.md`。
+RulePolicy 是确定性 CPU wiring smoke，不是 Qwen 结果。完整回归不是每次接手的默认动作，先读 `docs/current_status.md` 并按 diff 决定。已有完整回归记录、本轮 28 项窄测试和两端命令出处见 `docs/reproduction.md`。
 
-若 Python 没有 `venv`/`pip`，使用 conda 环境或 `uv venv .venv` 加
-`uv pip install --python .venv/bin/python -r requirements-dev.txt`。本机现有
-`.venv` 是 uv 管理环境。
+本机 `/usr/bin/python3` 没有 `ensurepip`，因此推荐 uv。其他提供 `venv`/`pip`
+的 Python 或 conda 环境才使用 `python -m venv` 加 `pip install`。
 
-需要检索时再安装 `requirements-retrieval.txt` 并构建本地索引。需要旧 JSON 模型适配器的本地 Transformers 路径时安装 `requirements-llm.txt`；Amazon 数据准备脚本才需要 `requirements-data.txt`。
+需要检索时使用 `uv pip install --python .venv/bin/python -r requirements-retrieval.txt`；旧 JSON 模型适配器和 Amazon 数据准备分别使用 `requirements-llm.txt`、`requirements-data.txt`。
 
 ## 运行路径
 

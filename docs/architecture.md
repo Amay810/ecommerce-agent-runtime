@@ -1,22 +1,20 @@
-# Architecture and file map
+# 架构与文件地图
 
-This is the canonical handoff map for the checkout. Read it after
-`AGENTS.md`; use `docs/current_status.md` for the short state and
-`docs/reproduction.md` for environment-specific commands.
+这是仓库的 canonical handoff map。先读 `AGENTS.md`；短状态见
+`docs/current_status.md`，环境和命令见 `docs/reproduction.md`。
 
-## Evidence labels
+## 证据标签
 
-- **Executed**: a command or test was run and its environment is named.
-- **Static**: derived from the checked-in implementation, schemas or imports.
-- **Historical**: retained experiment or report with its original revision and
-  policy attribution.
-- **Pending**: deliberately not run in this cleanup.
+- **Executed**：实际执行过命令，并记录了环境、版本、范围和结果。
+- **Static**：由当前源码、schema、import 或配置核对得出，不等于运行验证。
+- **Historical**：保留原始 revision、策略和执行类别的旧实验或报告。
+- **Pending**：本轮有意没有执行的项目。
 
-The map was reviewed against local commit `ecb3e3d` on 2026-09-20. It covers
-all tracked project files listed below. Locked task contents are registered by
-path only; they were not opened.
+代码职责以本轮开始核对时的 `1379ec9` 为基线；本轮后续只改文档，不改变
+运行时代码。下面覆盖全部 tracked 项目文件。locked task 只登记路径，没有
+打开内容。
 
-## Main call path
+## 主调用链
 
 ```text
 ecommerce_rag.harness CLI
@@ -31,113 +29,116 @@ ecommerce_rag.harness CLI
   -> TrajectoryStore + grade(TaskSpec, Trajectory)
 ```
 
-The supported Qwen path is `NativeToolPolicy`. Its provider uses an
-OpenAI-compatible chat-completions wire format; the configured model is local
-Qwen, not an OpenAI-hosted model. `LLMPolicy` is the older JSON-envelope
-compatibility path. Tau3 has a separate adapter and is not part of the local
-CPU smoke.
+当前支持的 Qwen 路径是 `NativeToolPolicy`。provider 使用
+OpenAI-compatible chat-completions wire format，但模型是本地 Qwen，不是
+OpenAI 托管模型。`RulePolicy` 只用于 CPU wiring 验证；`LLMPolicy` 是旧的
+JSON envelope 兼容路径。Tau3 通过独立 adapter 接入，不属于本机 CPU smoke。
 
-## Interfaces and ownership
+## 模块接口与职责
 
-### Policy input and action conversion
+### Policy 输入与动作转换
 
-- `domain.py`: `TaskSpec` contains task and hidden scoring expectations;
-  `AgentObservation` is the policy-visible projection; `AgentAction` is the
-  policy output; `ToolCall`, `Trajectory` and `GradeResult` are serialisable
-  trace/score contracts. Hidden fields must not enter an observation.
-- `harness.py`: `HarnessRunner.run` starts the session, appends the initial
-  user event, calls `policy.act`, and appends assistant/tool/user events. It
-  resolves typed input through `UserSimulator`, records confirmation spans,
-  snapshots SQLite state, and calls `grade`. `TrajectoryStore` persists the
-  JSON trace and grade in SQLite.
-- `native_tool_policy.py`: `_history_messages` converts canonical history to
-  provider messages. A non-empty history is the only provenance source;
-  assistant tool calls receive a synthetic `call_history_*` id and the next
-  `role=tool` event uses the same id. Only an entirely empty history uses
-  `current_message` as the initial user event. `_to_action` validates one
-  provider tool call, injects the harness-owned `user_id`, preserves
-  `request_user_input(input_type=...)`, and emits an `AgentAction`.
-- `agent_runtime.py`: `AgentRuntime.prepare_messages` builds the system,
-  policy and optional Skill blocks, annotates tool names, and optionally
-  compacts a provider-only copy. `validate_generation` and `run_turn` are the
-  lower-level shared native/Tau3 protocol contract; Native currently performs
-  its own adapter loop for historical compatibility.
-- `llm_policy.py`: compatibility parser for the older JSON action envelope;
-  it is not the current Qwen tool-call path. `llm.py` is its small completion
-  helper.
-- `skill_loader.py` and `skills/return_request/SKILL.md`: optional versioned
-  prompt guidance. Loading a Skill changes prompt context and metadata only;
-  it cannot change schemas, permissions, confirmation, scoring or SQLite.
+`domain.py` 定义 `TaskSpec`、`AgentObservation`、`AgentAction`、`ToolCall`、
+`Trajectory` 和 `GradeResult`。`TaskSpec` 保存 hidden scoring expectations；
+`AgentObservation` 是 policy 能看到的 projection，hidden 字段不能进入其中。
 
-### Trusted execution and state
+`harness.py` 的 `HarnessRunner.run` 建立 session，追加 user/assistant/tool
+事件，调用 `policy.act`，通过 `UserSimulator` 处理 typed input，记录
+confirmation spans，快照 SQLite，并调用 `grade`。`TrajectoryStore` 将 trace
+和 grade 持久化到 SQLite。
 
-- `tool_schema.py`: canonical public JSON Schemas, argument validation and
-  compact prompt rendering. `user_id` is declared for trusted internal calls
-  but hidden and injected on the Native provider boundary.
-- `tools.py`: `RetailTools.call` is the final typed dispatch boundary used by
-  Direct and MCP. It validates arguments, applies the identity guard, dispatches
-  the registry method, records `ToolCall`, and returns structured errors. Read
-  tools cover catalog/policy/order/eligibility; write tools perform conditional
-  SQLite updates and idempotent replay checks.
-- `confirmation.py`: `ConfirmationLedger` is in-memory per runtime boundary.
-  The host issues a request after a concrete typed confirmation action, records
-  the real user response, and passes only the matching authorization id to a
-  write. Session, user, operation and canonical parameter hash must match.
-- `orders.py`: SQLite schema, deterministic seed/reset, authenticated order
-  reads and snapshots. `tools.py` owns business guards and mutations; this
-  module does not decide model actions.
-- `retail_protocol.py`: additional Tau3/compiler write method set and contracts;
-  `tools.py` remains their execution boundary.
-- `mcp_server.py`: optional MCP façade. It injects server-side user/session
-  context and delegates every operation to `RetailTools`; it is not a second
-  authorization implementation.
-- `evidence.py`: converts successful tool results into evidence records and
-  verifies final-answer facts/citations. `freshness.py` classifies stale or
-  missing `updated_at` data. These modules diagnose answers; they do not alter
-  tool state.
+`native_tool_policy.py` 的 `_history_messages` 将 canonical history 转成
+provider messages。非空 `history` 是唯一消息来源；assistant tool call 和后续
+`role=tool` 结果通过 `call_history_*` 配对；只有空 history 才用
+`current_message` 作为初始 user。`_to_action` 校验单个 provider tool call，
+注入 harness-owned `user_id`，保留 `request_user_input(input_type=...)`，并
+生成 `AgentAction`。
 
-### Retrieval and presentation
+`agent_runtime.py` 的 `AgentRuntime.prepare_messages` 生成 system/policy/Skill
+prompt，补充 tool name 并对 provider copy 做可选 compaction；`validate_generation`
+和 `run_turn` 是较低层的 native/Tau3 protocol contract。当前 Native 为保持
+历史兼容仍有自己的 adapter loop。
 
-- `retrieval_index.py`: reads product/policy JSONL, builds chunks, embeddings,
-  parent cards and a manifest consumed by the retriever.
-- `hybrid_retriever.py`: validates the manifest, then combines dense
-  SentenceTransformers/FAISS-or-NumPy ranking with BM25/RRF and optional
-  reranking. Generated index files are ignored and must not be committed.
-- `catalog.py`: deterministic grouping and human-readable recommendation or
-  comparison briefs used by retrieval-facing code/tests.
-- `config.py`: environment-driven data/index/model paths, freshness and
-  retrieval parameters. Its legacy `LLM_*` defaults are for compatibility;
-  Native Qwen requires an explicit local endpoint as documented in
-  `docs/reproduction.md`.
-- `context_compaction.py`: provider-only loss-aware history compaction. Stored
-  trajectory history is not mutated.
+`llm_policy.py` 只解析旧 JSON action envelope，`llm.py` 是其 completion helper；
+两者都不是当前 Qwen tool-call 主路径。`skill_loader.py` 和
+`skills/return_request/SKILL.md` 只提供可选的 versioned prompt guidance，不能
+改变 schema、权限、confirmation、评分或 SQLite。
 
-### Harness, compatibility and diagnostics
+### 可信执行与状态
 
-- `legacy_closure.py`: optional return-workflow progress reducer.
-- `action_constraint.py`: optional one-step action remapping/fail-closed
-  contract derived from that reducer; not enabled by the default CLI.
-- `legacy_closure_benchmark.py`: legacy return workflow benchmark helpers,
-  database cloning and protocol gates used by compatibility tests.
-- `phase1_write_gate.py`: synthetic write-gate probes, scorer and go/no-go
-  aggregation; it is a model-free safety experiment, not the main harness.
-- `process_audit.py`: audits external simulation message sequences for read,
-  confirmation and write ordering.
-- `diagnostics/transaction_audit.py`: model-free guarded-vs-unsafe differential
-  replay and contract audit. `UnsafeRetailTools` is explicitly diagnostic.
-- `tau3_agent_adapter.py`: adapts Tau3-style `generate_next_message` calls to
-  `AgentRuntime`; external Tau3 owns the surrounding environment.
-- `tau3_retail_v1.py`: verifies the pinned external Tau2 checkout, builds its
-  command and validates returned native configuration/results.
-- `verified_sft.py`: converts audited external trajectories into leakage-aware
-  structure/process splits for optional dataset preparation; it is not a
-  training runtime.
+`tool_schema.py` 是 canonical JSON Schema、参数校验和 prompt rendering 来源。
+`user_id` 对内部 trusted call 存在，但在 Native provider 边界隐藏并注入。
 
-## File map
+`tools.py` 的 `RetailTools.call` 是 Direct 和 MCP 共用的 final typed dispatch
+boundary：校验参数、执行 identity guard、调用 registry、记录 `ToolCall`，并
+返回结构化错误。`get_policy`、order、eligibility 是 read tools；写工具负责
+条件 SQLite update 和幂等 replay。
 
-### Root and environment files
+`confirmation.py` 的 `ConfirmationLedger` 属于一个 runtime boundary。host 在
+typed confirmation action 后 issue request，记录真实 user response，只有匹配
+session、user、operation 和 canonical parameter hash 的 authorization id 才能
+传给 write。
 
-| Path | Purpose and disposition |
+`orders.py` 管 SQLite schema、seed/reset、authenticated read 和 snapshot；业务
+guard 与 mutation 在 `tools.py`。`retail_protocol.py` 提供 Tau3/compiler 的
+额外 write surface，但仍由 `tools.py` 执行。
+
+`mcp_server.py` 只注入 server-side user/session 并委托 `RetailTools`，不另造
+authorization。`evidence.py` 将成功 tool result 转成 evidence 并核验回答，
+`freshness.py` 诊断 `updated_at` 新鲜度；两者不改变工具状态。
+
+### Retrieval 与展示
+
+`retrieval_index.py` 从 product/policy JSONL 构建 chunks、embeddings、parent cards
+和 manifest；`hybrid_retriever.py` 校验 manifest 后组合
+SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 index 被
+忽略，不应提交。`catalog.py` 负责确定性的推荐/比较展示；`config.py` 负责
+环境路径和 retrieval 参数；`context_compaction.py` 只压缩 provider copy，
+不修改存储的 trajectory history。
+
+### Harness、兼容路径与诊断
+
+- `legacy_closure.py` 是可选的 return-workflow progress reducer；
+  `action_constraint.py` 根据它做单步 remap/fail-closed，默认 CLI 不启用。
+- `legacy_closure_benchmark.py` 提供旧 return workflow benchmark、数据库 clone
+  和 protocol gate；`phase1_write_gate.py` 是 model-free 的 synthetic write-gate
+  probe/scorer，不是主 harness。
+- `process_audit.py` 审核外部 simulation 的 read/confirmation/write 顺序；
+  `diagnostics/transaction_audit.py` 做 guarded-vs-unsafe differential replay，
+  其中 `UnsafeRetailTools` 只用于诊断。
+- `tau3_agent_adapter.py` 将 Tau3 的 `generate_next_message` 接到
+  `AgentRuntime`；外部 Tau3 负责外围环境。`tau3_retail_v1.py` 校验 pinned
+  Tau2 checkout、构造命令并核验返回配置/result。
+- `verified_sft.py` 将已审计轨迹转换成 leakage-aware structure/process split，
+  供可选数据准备使用，不是训练 runtime。
+
+## 具体依据与核对位置
+
+下面这些是关键职责的具体出处；未列出的文件只在文件地图中说明用途，不把
+文件名本身当作验证证据。
+
+| 结论 | 源码位置 | 对应测试或原始结果 | 证据级别 |
+|---|---|---|---|
+| 非空 `history` 是消息来源，tool result 不补成 user，tool-call/result id 配对 | `native_tool_policy.py::_history_messages`、`NativeToolPolicy.act` | `tests/test_native_tool_policy.py::test_tool_result_continuation_does_not_duplicate_current_user_turn`、`test_real_user_event_is_preserved_when_text_matches_tool_result`；提交 `7b52e80` | Executed/Static |
+| `request_user_input` 的 typed `input_type` 转成 `AgentAction.requested_input_type` | `native_tool_policy.py::_to_action`、`harness.py::_requested_input_type` | `test_native_control_tool_preserves_declared_input_type`；`test_control_tools_map_to_internal_actions` | Executed/Static |
+| Harness 保存事件、推进 simulator、issue/record confirmation 并评分 | `harness.py::HarnessRunner.run`、`grade`、`TrajectoryStore` | `tests/test_harness_tools.py` 中 `test_return_v2_requires_confirmation_for_a_successful_write`、`test_plain_text_confirmation_request_is_classified_without_auto_correction`、`test_rule_policy_gets_verification_and_confirmation_from_user_simulator` | Static/Executed |
+| 工具边界校验 schema、identity、confirmation、dispatch 并记录 `ToolCall` | `tools.py::RetailTools.call`、`_identity_guard`、`_require_trusted_confirmation` | `tests/test_tool_schema.py` 的 schema/signature/identity guard tests；`tests/test_confirmation.py::test_write_confirmed_flag_without_trusted_record_is_blocked`、`test_direct_dispatch_rejects_string_confirmation_before_authorized_write` | Static/Executed |
+| confirmation 绑定 session/user/operation/参数哈希，拒绝后不可 replay | `confirmation.py::ConfirmationLedger.issue/respond/authorization_for/validate_authorization` | `tests/test_confirmation.py::test_confirmation_is_bound_to_session_user_operation_and_parameters`、`test_refusal_revokes_pending_confirmation_and_replay_is_idempotent` | Static/Executed |
+| Direct 与 MCP 汇合到同一工具 surface，MCP 不能覆盖 server identity | `mcp_server.py::MCPRetailFacade`、`build_server` | `tests/test_mcp_server.py::test_mcp_write_still_requires_confirmation`、`test_mcp_confirmation_callback_cannot_override_server_identity`、`test_mcp_surface_matches_retail_tools_registry` | Static/Executed |
+| return v2 需要 policy + eligibility，但不强制重复 `get_order` | `harness.py::_return_closure_v2_contract`、`_return_closure_facts_pass`、`grade` | `test_return_v2_does_not_require_redundant_get_order`、`test_return_v2_requires_policy_and_eligibility_facts` | Static/Executed |
+| retrieval index 与运行时 chunks/manifest 对齐 | `retrieval_index.py::build_index`、`hybrid_retriever.py::HybridRetriever.__init__` | `tests/test_retrieval_index.py::test_build_index_loads_and_serves_retrieval_and_tool`、`test_stale_bm25_cache_is_rebuilt_to_match_current_chunks` | Static/Executed |
+| evidence 只来自工具结果，citation 缺失与 hard contradiction 分开 | `evidence.py::convert_tool_call_to_evidence`、`verify_answer` | `tests/test_evidence_grounding.py::test_failed_tool_produces_no_evidence`、`test_missing_citation_and_coverage_are_diagnostic_only`、`test_wrong_structured_price_is_a_hard_contradiction` | Static/Executed |
+| return 实验数字的 policy/execution class 可追溯 | `docs/experiments/return_closure_deterministic_smoke_v1.json`、`return_closure_exploration_deterministic_v1.json`、`return_closure_validation_deterministic_v1.json`、`return_closure_trial_status_v1.json` | 各 JSON 的 `status`、`policy`、`execution_class`、`summary` 字段；RulePolicy 结果不能当模型结果 | Historical，逐项数字未在本轮重跑 |
+| 历史 120-task/360-trajectory 汇总 | `docs/harness_v2_llm_360_regraded_v2.json`、`docs/evaluation.md` | JSON 的 `by_split`/`regraded` 字段；原始轨迹不在本 checkout | Historical，非当前 Native 修复证据 |
+
+因此，“文件被保留”与“文件中的每个数字已重新验证”是两件事；实验文件的
+数字只在上述原始 JSON 和其记录的执行类别内成立。
+
+## 文件地图
+
+### 根目录与环境文件
+
+| 路径 | 用途与处理 |
 |---|---|
 | `README.md` | Short public overview and links to this map, status, reproduction and safety; retained. |
 | `AGENTS.md` | New-agent navigation and commands; retained and kept short. |
@@ -154,9 +155,9 @@ CPU smoke.
 | `requirements-data.txt` | Optional `datasets` layer for Amazon preparation; retained only for data generation. |
 | `LICENSE` | Repository license; retained. |
 
-### Runtime package
+### Runtime 包
 
-| Path | Role and evidence |
+| 路径 | 作用与依据 |
 |---|---|
 | `ecommerce_rag/__init__.py` | Package/version marker; imported by runtime modules. |
 | `ecommerce_rag/domain.py` | Public dataclasses listed above; used across harness, policies and tests. |
@@ -190,10 +191,10 @@ CPU smoke.
 | `ecommerce_rag/diagnostics/__init__.py` | Diagnostics package marker; retained. |
 | `ecommerce_rag/diagnostics/transaction_audit.py` | Model-free transaction contract/differential audit; audit script/tests. |
 
-### Tests
+### 测试
 
-Each test file is an executable contract for the named module. The full local
-suite at this baseline passed 291 tests. The retained files are:
+每个测试文件都是对应模块的 executable contract。本地完整回归的旧记录是
+291 passed；本轮只执行了 `docs/reproduction.md` 中列出的窄测试。保留的测试是：
 
 `test_agent_runtime.py` (provider runtime), `test_native_tool_policy.py`
 (native parsing/provenance), `test_llm_policy.py` and
@@ -212,9 +213,9 @@ evidence), `test_context_compaction.py` (provider history),
 `test_tau3_retail_nscc_job.py` (external job contracts), `test_verified_sft.py`
 (dataset conversion), and `test_skill_compare.py` (candidate decision rules).
 
-### Scripts and cluster wrappers
+### Scripts 与集群 wrapper
 
-| Path/group | Use and status |
+| 路径/分组 | 用途与状态 |
 |---|---|
 | `scripts/README.md` | Script routing; retained. |
 | `scripts/build_retrieval_index.py` | CLI wrapper for the retrieval index builder; optional retrieval. |
@@ -234,9 +235,9 @@ evidence), `test_context_compaction.py` (provider history),
 | `nscc/serve_tau3_agent_v1.pbs` | Cluster Tau3 model-serving job. |
 | `nscc/run_tau3_retail_base_v1.pbs` | Cluster Tau3 base evaluation job. |
 
-### Data, Skill and experiment artifacts
+### 数据、Skill 与实验产物
 
-| Path/group | Source, consumer and evidence |
+| 路径/分组 | 来源、使用方与依据 |
 |---|---|
 | `ecommerce_rag/data/sample_products.jsonl` | Small checked-in product corpus for CPU/retrieval examples; config/index input. |
 | `ecommerce_rag/data/policies.jsonl` | Checked-in policy source; direct `get_policy` fallback and retrieval input. |
@@ -278,10 +279,9 @@ evidence), `test_context_compaction.py` (provider history),
 | `docs/experiments/return_closure_validation_deterministic_v1.json` | Deterministic validation report; retained, not Skill-effect evidence. |
 | `docs/experiments/tau3_g0e_context_compaction_offline.json` | Offline counterfactual compaction measurement metadata; retained with its no-model caveat. |
 
-## Not proved by this map
+## 本地图不能证明的内容
 
-The message-source fix is covered by static inspection and targeted CPU tests;
-its effect on real Qwen action selection is still pending. AutoDL currently has
-no visible GPU and no vLLM service. No GitHub Actions workflow is present in
-this checkout, so no CI result is claimed. Deterministic Rule/Oracle reports
-prove wiring and guard contracts only, not Skill effectiveness or model quality.
+消息来源修复已做静态核对和窄 CPU 测试，但对真实 Qwen action selection 的影响
+仍是 Pending。AutoDL 当前无可见 GPU、没有 vLLM service。当前 checkout 没有
+GitHub Actions workflow，因此不声称有 CI 结果。deterministic Rule/Oracle 报告
+只能证明 wiring 和 guard contract，不能证明 Skill 有效或模型质量。
