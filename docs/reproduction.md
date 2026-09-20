@@ -21,6 +21,20 @@ python -m ecommerce_rag.harness run \
 python -m pytest tests -q
 ```
 
+For the native Qwen experiment, the endpoint is an OpenAI-compatible wire
+protocol only; it does not imply an OpenAI-hosted model. Set the endpoint and
+credentials explicitly, for example:
+
+```bash
+export ARAG_LLM_BASE_URL=http://127.0.0.1:8123/v1
+export ARAG_LLM_MODEL=Qwen/Qwen3-4B-Instruct-2507
+export ARAG_LLM_API_KEY=local-vllm
+```
+
+If `ARAG_LLM_BASE_URL` is unset, the native policy fails closed instead of
+falling back to a hosted provider. Do not commit these values when the key is
+real.
+
 This four-task fixture checks order reads, an idempotent write, a blocked
 write, and an identity-verification handoff. Retrieval tasks are separate:
 
@@ -36,6 +50,11 @@ python -m ecommerce_rag.harness run \
   --repeats 1 \
   --seed-db
 ```
+
+The build also writes `retrieval_manifest.json`, binding the embedding model,
+chunk/parent content, shape and embedding hash. A retriever refuses an index
+without a manifest or with mismatched content; rebuild an index after changing
+the corpus or embedding model.
 
 ## Replay and audit
 
@@ -79,6 +98,11 @@ python -m scripts.propose_skill_patch \
   --store logs/return_closure_trajectories.sqlite \
   --output logs/return_candidate.json
 ```
+
+The same command accepts `--split smoke` when used with
+`ecommerce_rag/data/return_closure_smoke.jsonl`. Rule/Oracle runs are
+deterministic offline checks and must not be reported as model or Skill-effect
+measurements.
 
 For a configured OpenAI-compatible native tool service, run A/B/C with the
 same model settings and task seeds. The Skill is enabled only when passed:

@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 from ecommerce_rag.context_compaction import compact_history
 from ecommerce_rag.domain import AgentObservation
 from ecommerce_rag.native_tool_policy import NativeGeneration, NativeToolPolicy, native_tool_schemas
 from ecommerce_rag.tool_schema import TOOL_SCHEMAS
+from ecommerce_rag.harness import _requested_input_type
 
 
 class _Response:
@@ -88,6 +91,21 @@ def test_openai_generator_uses_native_tools_wire_format():
     assert generation.prompt_tokens == 20
 
 
+def test_native_env_requires_endpoint_and_defaults_to_project_model(monkeypatch):
+    monkeypatch.delenv("ARAG_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("ERAG_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("ARAG_LLM_MODEL", raising=False)
+    monkeypatch.delenv("ERAG_LLM_MODEL", raising=False)
+    monkeypatch.setenv("ARAG_LLM_API_KEY", "test-key")
+    with pytest.raises(RuntimeError, match="ARAG_LLM_BASE_URL"):
+        NativeToolPolicy.from_env()
+
+    monkeypatch.setenv("ARAG_LLM_BASE_URL", "http://127.0.0.1:8123/v1")
+    policy = NativeToolPolicy.from_env()
+    assert policy.generator_meta["model"] == "Qwen/Qwen3-4B-Instruct-2507"
+    assert policy.generator_meta["backend"] == "openai_compatible_native_tools"
+
+
 def test_native_control_tools_map_to_internal_actions():
     ask = NativeToolPolicy(lambda _m, _t: NativeGeneration(tool_calls=[{
         "function": {"name": "request_user_input", "arguments": json.dumps({
@@ -101,6 +119,33 @@ def test_native_control_tools_map_to_internal_actions():
     action = handoff.act(_observation())
     assert action.action_type == "handoff"
     assert action.arguments == {"reason": "ownership_failed", "order_id": "O1"}
+
+
+def test_native_control_tool_preserves_declared_input_type():
+    ask = NativeToolPolicy(lambda _m, _t: NativeGeneration(tool_calls=[{
+        "function": {"name": "request_user_input", "arguments": json.dumps({
+            "message": "请提供退货原因", "input_type": "reason"})}}]))
+    action = ask.act(_observation())
+    assert action.requested_input_type == "return_reason"
+    assert _requested_input_type(action, None) == "return_reason"
+
+
+def test_native_control_tool_rejects_invalid_input_type():
+    policy = NativeToolPolicy(lambda _m, _t: NativeGeneration(tool_calls=[{
+        "function": {"name": "request_user_input", "arguments": json.dumps({
+            "message": "请提供信息", "input_type": "not-a-contract-value"})}}]))
+    action = policy.act(_observation())
+    assert action.action_type == "handoff"
+    assert policy.last_trace["attempts"][-1]["parse_stage"] == "request_input_type_invalid"
+
+
+def test_native_control_tool_records_non_string_input_type_as_protocol_error():
+    policy = NativeToolPolicy(lambda _m, _t: NativeGeneration(tool_calls=[{
+        "function": {"name": "request_user_input", "arguments": json.dumps({
+            "message": "请提供信息", "input_type": ["confirmation"]})}}]))
+    action = policy.act(_observation())
+    assert action.action_type == "handoff"
+    assert policy.last_trace["attempts"][-1]["parse_stage"] == "request_input_type_invalid"
 
 
 def test_tool_result_continuation_does_not_duplicate_current_user_turn():

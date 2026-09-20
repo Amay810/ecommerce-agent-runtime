@@ -43,6 +43,17 @@ request. SQLite conditional updates remain the idempotency boundary, so a
 legitimate retry can return `idempotent_replay=true` without incrementing the
 business version a second time.
 
+`RetailTools.call` is also the final typed dispatch boundary: it revalidates the
+JSON Schema before invoking a method. This matters for Direct callers and
+diagnostics that do not pass through a model parser; in particular, a string
+such as `"false"` is not accepted as boolean `false`. The MCP confirmation
+callback binds the configured server-side user after merging callback
+arguments, so an input argument cannot replace that identity.
+
+The return-window date is frozen by `ERAG_SIMULATED_TODAY` (default
+`2026-07-20`) and is read when `RetailTools` is constructed. Freeze manifests
+and tool execution therefore use the same date configuration.
+
 ## Safety interpretation
 
 Agent v2 recorded a 5% forbidden-tool attempt rate and a 0% illegal-state-change rate. This means the execution layer protected the database even when the policy selected an invalid action; it does not mean policy compliance was perfect.

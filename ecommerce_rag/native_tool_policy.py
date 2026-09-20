@@ -73,6 +73,11 @@ CONTROL_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+_CONTROL_INPUT_TYPES = frozenset(
+    {"order_id", "verification_code", "confirmation", "reason", "clarification", "other"}
+)
+_HARNESS_INPUT_TYPES = {"reason": "return_reason"}
+
 
 @dataclass
 class NativeGeneration:
@@ -190,13 +195,21 @@ class NativeToolPolicy:
         skill_path: str | os.PathLike[str] | None = None,
         skill_enabled: bool = False,
     ) -> "NativeToolPolicy":
-        base_url = os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "https://api.openai.com/v1"))
-        model = os.getenv("ARAG_LLM_MODEL", os.getenv("ERAG_LLM_MODEL", "gpt-4o-mini"))
+        base_url = os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "")).strip()
+        if not base_url:
+            raise RuntimeError(
+                "ARAG_LLM_BASE_URL is required for the native tool backend; "
+                "the endpoint must expose an OpenAI-compatible chat-completions API"
+            )
+        model = os.getenv(
+            "ARAG_LLM_MODEL",
+            os.getenv("ERAG_LLM_MODEL", "Qwen/Qwen3-4B-Instruct-2507"),
+        )
         api_key = os.getenv("ARAG_LLM_API_KEY", os.getenv("ERAG_LLM_API_KEY", ""))
         compact = context_compaction_enabled(default=True)
         return cls(
             cls._openai_generator(base_url, api_key, model),
-            generator_meta={"backend": "openai_native_tools", "model": model, "base_url": base_url},
+            generator_meta={"backend": "openai_compatible_native_tools", "model": model, "base_url": base_url},
             compact_context=compact,
             skill_path=skill_path,
             skill_enabled=skill_enabled,
@@ -267,7 +280,23 @@ class NativeToolPolicy:
                 message = arguments.get("message")
                 if not isinstance(message, str) or not message.strip():
                     raise NativeActionError("request_message_missing", "request_user_input requires message")
-                return AgentAction.answer(message, requires_user_response=True)
+                input_type = arguments.get("input_type")
+                if not isinstance(input_type, str) or input_type not in _CONTROL_INPUT_TYPES:
+                    raise NativeActionError(
+                        "request_input_type_invalid",
+                        "request_user_input requires one of the declared input_type values",
+                    )
+                unknown = sorted(set(arguments) - {"message", "input_type"})
+                if unknown:
+                    raise NativeActionError(
+                        "request_input_argument_invalid",
+                        f"request_user_input received unknown argument(s): {unknown}",
+                    )
+                return AgentAction.answer(
+                    message,
+                    requires_user_response=True,
+                    requested_input_type=_HARNESS_INPUT_TYPES.get(input_type, input_type),
+                )
             if name == "handoff_to_human":
                 reason = arguments.get("reason")
                 if not isinstance(reason, str) or not reason.strip():

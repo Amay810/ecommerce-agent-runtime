@@ -2,6 +2,7 @@
 """Hybrid retrieval: dense semantic search + BM25 lexical search + RRF fusion."""
 
 import json
+import hashlib
 import pickle
 import re
 import time
@@ -11,6 +12,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from . import config
+from .retrieval_index import chunks_fingerprint, parents_fingerprint
 
 
 class FastBM25Index:
@@ -73,16 +75,61 @@ class HybridRetriever:
             self.chunks = [json.loads(line) for line in f if line.strip()]
         with open(index_dir / "parents.json", encoding="utf-8") as f:
             self.parents = json.load(f)
+        manifest_path = index_dir / "retrieval_manifest.json"
+        if not manifest_path.exists():
+            raise ValueError(
+                f"retrieval index manifest is missing: {manifest_path}; rebuild the index"
+            )
+        with manifest_path.open(encoding="utf-8") as f:
+            manifest = json.load(f)
+        matrix = np.asarray(self.embeddings, dtype="float32")
+        expected = {
+            "manifest_version": "retrieval-index-v1",
+            "embed_model": embed_model,
+            "chunk_count": len(self.chunks),
+            "embedding_shape": list(matrix.shape),
+            "embedding_sha256": hashlib.sha256(matrix.tobytes(order="C")).hexdigest(),
+            "chunks_sha256": chunks_fingerprint(self.chunks),
+            "parents_sha256": parents_fingerprint(self.parents),
+        }
+        mismatches = {
+            key: {"expected": value, "actual": manifest.get(key)}
+            for key, value in expected.items()
+            if manifest.get(key) != value
+        }
+        if mismatches:
+            raise ValueError(f"retrieval index manifest mismatch: {mismatches}")
+        if matrix.ndim != 2 or matrix.shape[0] != len(self.chunks) or not self.chunks:
+            raise ValueError(
+                f"retrieval index shape does not align with chunks: embeddings={matrix.shape}, "
+                f"chunks={len(self.chunks)}"
+            )
         self.by_id = {c["chunk_id"]: c for c in self.chunks}
         self.by_doc: dict[str, list[dict]] = defaultdict(list)
         for chunk in self.chunks:
             self.by_doc[chunk["doc_id"]].append(chunk)
         bm25_path = index_dir / "bm25_fast_v1.pkl"
+        tokenized = [tokenize_zh(c["text"]) for c in self.chunks]
         if bm25_path.exists():
-            with open(bm25_path, "rb") as f:
-                self.bm25 = pickle.load(f)
+            try:
+                with open(bm25_path, "rb") as f:
+                    loaded_bm25 = pickle.load(f)
+            except (AttributeError, EOFError, IndexError, OSError, pickle.PickleError, TypeError, ValueError):
+                loaded_bm25 = None
+            compatible = (
+                isinstance(loaded_bm25, FastBM25Index)
+                and loaded_bm25.n == len(self.chunks)
+                and len(loaded_bm25.doc_len) == len(self.chunks)
+                and all(
+                    0 <= doc_id < len(self.chunks)
+                    for postings in loaded_bm25.postings.values()
+                    for doc_id, _tf in postings
+                )
+            ) if loaded_bm25 is not None else False
+            self.bm25 = loaded_bm25 if compatible else FastBM25Index(tokenized)
         else:
-            self.bm25 = FastBM25Index([tokenize_zh(c["text"]) for c in self.chunks])
+            self.bm25 = FastBM25Index(tokenized)
+        if not bm25_path.exists() or not compatible:
             try:
                 with open(bm25_path, "wb") as f:
                     pickle.dump(self.bm25, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -97,8 +144,24 @@ class HybridRetriever:
             faiss_path = index_dir / "dense_flatip.faiss"
             if faiss_path.exists():
                 self.faiss_index = faiss.read_index(str(faiss_path))
-            else:
-                matrix = np.asarray(self.embeddings, dtype="float32")
+                faiss_matches = (
+                    getattr(self.faiss_index, "d", None) == matrix.shape[1]
+                    and getattr(self.faiss_index, "ntotal", None) == matrix.shape[0]
+                )
+                reconstruct_n = getattr(self.faiss_index, "reconstruct_n", None)
+                if faiss_matches and callable(reconstruct_n):
+                    try:
+                        indexed = np.asarray(
+                            reconstruct_n(0, matrix.shape[0]), dtype="float32"
+                        )
+                        faiss_matches = indexed.shape == matrix.shape and np.allclose(
+                            indexed, matrix, rtol=1e-5, atol=1e-6
+                        )
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        faiss_matches = False
+                if not faiss_matches:
+                    self.faiss_index = None
+            if self.faiss_index is None:
                 self.faiss_index = faiss.IndexFlatIP(matrix.shape[1])
                 self.faiss_index.add(matrix)
                 faiss.write_index(self.faiss_index, str(faiss_path))

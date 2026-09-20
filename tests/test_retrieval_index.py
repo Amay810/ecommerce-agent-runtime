@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import pickle
 import sys
 import types
 from pathlib import Path
 
 import numpy as np
 
-from ecommerce_rag.hybrid_retriever import HybridRetriever
+from ecommerce_rag.hybrid_retriever import FastBM25Index, HybridRetriever
 from ecommerce_rag.retrieval_index import build_index, build_product_chunks
 from ecommerce_rag.tools import RetailTools
 
@@ -73,10 +74,11 @@ def test_product_chunk_contract_matches_retriever_fields():
 def test_build_index_loads_and_serves_retrieval_and_tool(tmp_path, monkeypatch):
     products, policies = _write_sources(tmp_path)
     index_dir = tmp_path / "index"
-    stats = build_index(index_dir, products, policies, encoder=_FakeEncoder())
+    stats = build_index(index_dir, products, policies, embed_model="fake", encoder=_FakeEncoder())
 
     assert stats["embedding_shape"] == [3, 2]
-    assert all((index_dir / name).exists() for name in ("embeddings.npy", "chunks.jsonl", "parents.json"))
+    assert all((index_dir / name).exists() for name in (
+        "embeddings.npy", "chunks.jsonl", "parents.json", "retrieval_manifest.json"))
 
     monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=lambda _name: _FakeEncoder()))
     retriever = HybridRetriever(index_dir, embed_model="fake")
@@ -86,3 +88,16 @@ def test_build_index_loads_and_serves_retrieval_and_tool(tmp_path, monkeypatch):
     result = RetailTools(tmp_path / "unused.sqlite", retriever=retriever).search_catalog("Air Pro")
     assert result["ok"] is True
     assert result["items"] and result["items"][0]["product_id"] == "P001"
+
+
+def test_stale_bm25_cache_is_rebuilt_to_match_current_chunks(tmp_path, monkeypatch):
+    products, policies = _write_sources(tmp_path)
+    index_dir = tmp_path / "index"
+    build_index(index_dir, products, policies, embed_model="fake", encoder=_FakeEncoder())
+    with (index_dir / "bm25_fast_v1.pkl").open("wb") as handle:
+        pickle.dump(FastBM25Index([["stale"]]), handle)
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=lambda _name: _FakeEncoder()))
+    retriever = HybridRetriever(index_dir, embed_model="fake")
+
+    assert retriever.bm25.n == len(retriever.chunks)

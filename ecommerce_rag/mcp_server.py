@@ -56,7 +56,9 @@ class MCPRetailFacade:
             session_id=self.session_id,
             user_id=self.user_id,
             operation=operation,
-            arguments={"user_id": self.user_id, **arguments},
+            # The authenticated facade identity must win over untrusted callback
+            # arguments, just as it does for normal MCP tool calls.
+            arguments={**arguments, "user_id": self.user_id},
             request_text=request_text,
         )
 

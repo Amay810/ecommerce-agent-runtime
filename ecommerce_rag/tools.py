@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from datetime import date, datetime, timezone
@@ -13,6 +14,7 @@ from typing import Any, Callable
 from .domain import ToolCall
 from .confirmation import ConfirmationLedger
 from .retail_protocol import RETAIL_WRITE_TOOLS
+from .tool_schema import validate_arguments
 from . import config, orders
 
 
@@ -99,10 +101,11 @@ def _address_payload(
 
 
 class RetailTools:
-    def __init__(self, db_path: Path | str, retriever: Any | None = None, today: date = date(2026, 7, 20)):
+    def __init__(self, db_path: Path | str, retriever: Any | None = None, today: date | None = None):
         self.db_path = Path(db_path)
         self.retriever = retriever
-        self.today = today
+        configured_today = os.getenv("ERAG_SIMULATED_TODAY", "2026-07-20")
+        self.today = today or date.fromisoformat(configured_today)
         self.confirmation_ledger = ConfirmationLedger()
         self._active_call_context: dict[str, Any] | None = None
         self.calls: list[ToolCall] = []
@@ -228,8 +231,11 @@ class RetailTools:
                                        (time.perf_counter() - started) * 1000, blocked["error"]))
             return blocked
         try:
-            if name not in self._registry:
-                raise ValueError(f"unknown tool: {name}")
+            # Policies validate before dispatch, but Direct callers, diagnostics,
+            # and MCP adapters all converge here too.  Keep this boundary typed so
+            # a caller cannot bypass the JSON contract by invoking ``call``
+            # directly (for example, passing ``confirmed="false"``).
+            validate_arguments(name, arguments)
             self._active_call_context = {
                 "session_id": _session_id,
                 "confirmation_id": _confirmation_id,

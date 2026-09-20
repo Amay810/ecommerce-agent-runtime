@@ -97,7 +97,7 @@ def main() -> None:
     parser.add_argument("--skill-v0", type=Path, default=Path("skills/return_request/SKILL.md"))
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--arm", choices=("A", "B", "C", "all"), default="all")
-    parser.add_argument("--split", choices=("exploration", "validation", "locked"))
+    parser.add_argument("--split", choices=("smoke", "exploration", "validation", "locked"))
     parser.add_argument("--max-steps", type=int, default=8)
     args = parser.parse_args()
     tasks = load_tasks(args.tasks)
@@ -136,7 +136,9 @@ def main() -> None:
                 index=index, max_steps=args.max_steps,
             )
         except RuntimeError as exc:
-            if args.policy == "native" and "API_KEY" in str(exc):
+            if args.policy == "native" and any(
+                marker in str(exc) for marker in ("API_KEY", "BASE_URL")
+            ):
                 report["arms"][arm] = {
                     "arm": arm,
                     "status": "not_executed",

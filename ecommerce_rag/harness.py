@@ -273,6 +273,8 @@ class UserSimulatorProtocolError(ValueError):
 def _requested_input_type(action: AgentAction, progress: TaskProgress | None) -> str | None:
     if not action.requires_user_response:
         return None
+    if action.requested_input_type:
+        return action.requested_input_type
     lowered = action.content.lower()
     if _asks_for_verification_code(action.content):
         return "verification_code"

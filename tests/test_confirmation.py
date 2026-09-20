@@ -50,6 +50,36 @@ def test_confirmation_decision_is_not_substring_matching():
     assert confirmation_decision("好的，我还在考虑") is None
 
 
+def test_return_eligibility_uses_the_frozen_simulated_date(monkeypatch, tmp_path):
+    db = tmp_path / "retail.db"
+    seed_database(db, users=20, orders=100)
+    conn = connect(db)
+    try:
+        order = dict(conn.execute(
+            "SELECT * FROM orders WHERE status='delivered' AND quality_issue=0 AND opened=0 LIMIT 1"
+        ).fetchone())
+        conn.execute(
+            "UPDATE orders SET delivered_at='2026-07-17' WHERE order_id=?",
+            (order["order_id"],),
+        )
+        conn.commit()
+        code = conn.execute(
+            "SELECT verification_code FROM users WHERE user_id=?", (order["user_id"],)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    monkeypatch.setenv("ERAG_SIMULATED_TODAY", "2026-07-20")
+    within_window = RetailTools(db).check_return_eligibility(
+        order["order_id"], order["user_id"], code)
+    monkeypatch.setenv("ERAG_SIMULATED_TODAY", "2026-07-30")
+    outside_window = RetailTools(db).check_return_eligibility(
+        order["order_id"], order["user_id"], code)
+
+    assert within_window["eligible"] is True
+    assert outside_window["eligible"] is False
+
+
 def test_write_confirmed_flag_without_trusted_record_is_blocked(tmp_path):
     db = tmp_path / "retail.db"
     seed_database(db, users=20, orders=100)
@@ -60,6 +90,30 @@ def test_write_confirmed_flag_without_trusted_record_is_blocked(tmp_path):
         verification_code=code, confirmed=True,
     )
     assert result["error"] == "confirmation_required"
+    assert connect(db).execute(
+        "SELECT return_status FROM orders WHERE order_id=?", (order["order_id"],)
+    ).fetchone()[0] is None
+
+
+def test_direct_dispatch_rejects_string_confirmation_before_authorized_write(tmp_path):
+    """The shared execution boundary must enforce the schema, not only policies."""
+    db = tmp_path / "retail.db"
+    seed_database(db, users=20, orders=100)
+    order, code = _eligible(db)
+    tools = RetailTools(db)
+    arguments = {
+        "order_id": order["order_id"], "user_id": order["user_id"],
+        "verification_code": code, "confirmed": True,
+    }
+    auth = _authorized(tools, order, code)
+
+    result = tools.call(
+        "create_return_request", _session_id="s1", _confirmation_id=auth,
+        **{**arguments, "confirmed": "false"},
+    )
+
+    assert result["ok"] is False
+    assert "confirmed" in result["error"]
     assert connect(db).execute(
         "SELECT return_status FROM orders WHERE order_id=?", (order["order_id"],)
     ).fetchone()[0] is None

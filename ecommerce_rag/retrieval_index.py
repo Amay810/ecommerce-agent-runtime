@@ -1,7 +1,8 @@
 """Build the on-disk corpus consumed by :class:`HybridRetriever`.
 
 The output schema is intentionally the same small contract used by the
-retriever: ``embeddings.npy``, ``chunks.jsonl`` and ``parents.json``.  Product
+retriever: ``embeddings.npy``, ``chunks.jsonl``, ``parents.json`` and a
+provenance manifest.  Product
 and policy sources remain separate through ``source_type`` and their metadata,
 while parent cards preserve the evidence context returned by ``format_context``.
 """
@@ -9,11 +10,26 @@ while parent cards preserve the evidence context returned by ``format_context``.
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import config
+
+
+def _sha256_json(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def chunks_fingerprint(chunks: list[dict[str, Any]]) -> str:
+    """Return an order-sensitive fingerprint for the retriever's chunk contract."""
+    return _sha256_json(chunks)
+
+
+def parents_fingerprint(parents: dict[str, str]) -> str:
+    return _sha256_json(parents)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -191,6 +207,22 @@ def build_index(
     (index_dir / "parents.json").write_text(
         json.dumps(parents, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    (index_dir / "retrieval_manifest.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": "retrieval-index-v1",
+                "embed_model": embed_model,
+                "chunk_count": len(chunks),
+                "embedding_shape": list(embeddings.shape),
+                "embedding_sha256": hashlib.sha256(embeddings.tobytes(order="C")).hexdigest(),
+                "chunks_sha256": chunks_fingerprint(chunks),
+                "parents_sha256": parents_fingerprint(parents),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return {
         "products": len(products),
         "policies": len(policies),
@@ -198,6 +230,7 @@ def build_index(
         "parents": len(parents),
         "embed_model": embed_model,
         "embedding_shape": list(embeddings.shape),
+        "manifest": "retrieval_manifest.json",
         "build_time_ms": round((time.perf_counter() - started) * 1000, 2),
         "index_dir": str(index_dir),
     }

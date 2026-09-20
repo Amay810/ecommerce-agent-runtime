@@ -64,14 +64,29 @@ class AgentAction:
     arguments: dict[str, Any] = field(default_factory=dict)
     content: str = ""
     requires_user_response: bool = False
+    # Optional typed request metadata from a control action.  The harness keeps
+    # its legacy content classifier as a fallback for older policies, but native
+    # ``request_user_input`` calls must not lose their declared input type.
+    requested_input_type: str | None = None
 
     @classmethod
     def tool_call(cls, name: str, **arguments: Any) -> "AgentAction":
         return cls("tool_call", tool_name=name, arguments=arguments)
 
     @classmethod
-    def answer(cls, content: str, *, requires_user_response: bool = False) -> "AgentAction":
-        return cls("final_answer", content=content, requires_user_response=requires_user_response)
+    def answer(
+        cls,
+        content: str,
+        *,
+        requires_user_response: bool = False,
+        requested_input_type: str | None = None,
+    ) -> "AgentAction":
+        return cls(
+            "final_answer",
+            content=content,
+            requires_user_response=requires_user_response,
+            requested_input_type=requested_input_type,
+        )
 
     @classmethod
     def handoff(cls, reason: str, **arguments: Any) -> "AgentAction":

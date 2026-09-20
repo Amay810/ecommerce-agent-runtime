@@ -57,8 +57,9 @@ def build_manifest(tasks: Path, index: Path | None) -> dict[str, Any]:
         },
         "model": {
             "backend": "openai-compatible-native-tools",
-            "model": os.getenv("ARAG_LLM_MODEL", os.getenv("ERAG_LLM_MODEL", "gpt-4o-mini")),
-            "base_url": os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "https://api.openai.com/v1")),
+            "wire_protocol": "OpenAI-compatible; this does not select an OpenAI-hosted model",
+            "model": os.getenv("ARAG_LLM_MODEL", os.getenv("ERAG_LLM_MODEL", "Qwen/Qwen3-4B-Instruct-2507")),
+            "base_url": os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL")),
             "temperature": 0,
         },
         "budget": {"max_steps": 8, "repeats": 1, "max_generation_retries": 1, "cost_threshold": {"avg_tool_calls_ratio": 1.2}},

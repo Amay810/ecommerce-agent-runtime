@@ -78,6 +78,27 @@ def test_mcp_write_still_requires_confirmation():
         assert result["error"] == "confirmation_required"
 
 
+def test_mcp_confirmation_callback_cannot_override_server_identity():
+    with tempfile.TemporaryDirectory() as directory:
+        db = Path(directory) / "retail.db"
+        seed_database(db, users=20, orders=100)
+        account = _account(db)
+        facade = MCPRetailFacade(RetailTools(db), account["user_id"], session_id="mcp-test")
+        request_id = facade.issue_confirmation(
+            "create_return_request",
+            {
+                "order_id": account["order_id"],
+                "verification_code": account["verification_code"],
+                "confirmed": True,
+                "user_id": "U-attacker",
+            },
+            "确认提交退货？",
+        )
+        record = facade.tools.confirmation_ledger.records[request_id]
+        assert record.user_id == account["user_id"]
+        assert record.parameters["user_id"] == account["user_id"]
+
+
 def test_mcp_surface_matches_retail_tools_registry():
     assert set(MCP_TOOL_NAMES) == set(RetailTools(":memory:").executable_tool_names())
 
