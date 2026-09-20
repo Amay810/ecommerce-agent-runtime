@@ -72,12 +72,12 @@ accuracy 均为 `1.0`。这是工具 dispatch、状态、confirmation 和评分 
 `Historical/Executed, 本机`：上一轮在 `ecb3e3d` 执行并记录 `291 passed in
 6.95s`；本轮没有因为文档整理重新跑完整回归。`Historical/Executed, AutoDL`
 的旧记录是 `291 passed, 2 warnings`，发生在旧 checkout 加上当时两处未提交的
-消息来源修改上，也不是当前 `1379ec9` 的重新回归结果。
+消息来源修改上，也不是文件地图提交 `1379ec9` 的重新回归结果。
 
-## 本轮相关验证记录
+## 已记录的窄范围验证
 
-以下是本轮操作记录中实际执行的窄范围验证；最后一个文档提交只改文件地图，
-因此复用前一提交的代码验证：
+以下是已记录的窄范围验证，均执行于 `bd65a71`；后续提交只改文档，因此继续复用
+这些代码验证：
 
 | 环境与代码树 | 命令 | 结果与覆盖 |
 |---|---|---|
@@ -86,7 +86,7 @@ accuracy 均为 `1.0`。这是工具 dispatch、状态、confirmation 和评分 
 | AutoDL CPU，`bd65a71` 代码树 | `PYTHONPATH=$PWD CUDA_VISIBLE_DEVICES= /root/autodl-tmp/venvs/qwen-vllm/bin/python -m pytest -q tests/test_native_tool_policy.py tests/test_agent_runtime.py tests/test_harness_tools.py` | `28 passed in 4.69s`；同一窄范围在另一解释器可用，未启动 GPU。 |
 | AutoDL CPU，`bd65a71` 代码树 | `/root/autodl-tmp/venvs/qwen-vllm/bin/python -c '...'` | `autodl-imports-ok`；确认 AutoDL 主入口可导入。 |
 
-`1379ec9` 只补了文档中的完整路径，没有改变运行时代码；因此不重复执行上述
+文件地图提交 `1379ec9` 只补了文档中的完整路径，没有改变运行时代码；因此不重复执行上述
 代码验证。当前 HEAD 以 `git rev-parse HEAD` 为准。
 
 ## AutoDL Qwen 路径
@@ -121,7 +121,11 @@ export ARAG_LLM_API_KEY=local-vllm
   --output /tmp/native_smoke.json --policy native --repeats 1 --seed-db
 ```
 
-需要 retrieval 时也明确使用 AutoDL 解释器：
+以上是基础 Native smoke，**不加载 Skill**。若要运行 Skill v0，需在同一命令末尾
+显式追加 `--skill skills/return_request/SKILL.md`。
+
+查看 Skill trial 脚本参数时（这不是 retrieval 安装或索引构建命令），使用 AutoDL
+解释器：
 
 ```bash
 /root/autodl-tmp/venvs/qwen-vllm/bin/python -m scripts.run_skill_trial --help

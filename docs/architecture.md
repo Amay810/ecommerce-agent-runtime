@@ -134,6 +134,10 @@ SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 inde
 因此，“文件被保留”与“文件中的每个数字已重新验证”是两件事；实验文件的
 数字只在上述原始 JSON 和其记录的执行类别内成立。
 
+本轮完成范围是文件用途和关键接口依据的整理，不是逐个独立复核所有文件内容或
+所有历史数字。部分文件目前只登记用途；历史 120-task/360-trajectory 的原始轨迹
+不在当前 checkout，相关汇总只能按现有 JSON 和 `docs/evaluation.md` 标为历史资料。
+
 ## 文件地图
 
 ### 根目录与环境文件

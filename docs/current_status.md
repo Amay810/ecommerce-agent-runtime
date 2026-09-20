@@ -21,13 +21,13 @@
 |---|---|---|---|
 | 本机完整回归 | 否，复用历史记录 | `.venv/bin/python -m pytest -q`，代码树 `ecb3e3d` | `291 passed in 6.95s`；完整回归历史证据，不是本轮文档修改后的新执行。 |
 | AutoDL 完整回归 | 否，复用更早记录 | 旧 AutoDL checkout + 当时两处未提交消息来源修改 | `291 passed, 2 warnings`；历史 CPU 证据，不等同于当前 HEAD 的重新回归。 |
-| 本机窄测试 | 是 | `tests/test_native_tool_policy.py tests/test_agent_runtime.py tests/test_harness_tools.py`，`.venv`，`bd65a71` | `28 passed in 0.19s`；消息来源、Native/Runtime、Harness/评分边界。 |
+| 本机窄测试 | 否；执行于 `bd65a71`，后续纯文档提交复用 | `tests/test_native_tool_policy.py tests/test_agent_runtime.py tests/test_harness_tools.py`，`.venv` | `28 passed in 0.19s`；消息来源、Native/Runtime、Harness/评分边界。 |
 | 本机导入检查 | 是 | `from ecommerce_rag.harness ... NativeToolPolicy ... RetailTools` | `imports-ok`；主入口和关键模块可导入。 |
 | 本机 CPU smoke | 是 | `ecommerce_rag.harness run --tasks ecommerce_rag/data/harness_contract_smoke.jsonl --policy rule --repeats 1 --seed-db` | 4 条；task success、policy compliance、terminal-state accuracy 均 `1.0`；只证明 RulePolicy wiring。 |
-| AutoDL 窄测试 | 是 | `/root/autodl-tmp/venvs/qwen-vllm/bin/python -m pytest` 加上述 3 个测试文件，`CUDA_VISIBLE_DEVICES=` | `28 passed in 4.69s`；证明 AutoDL CPU 解释器能执行相关合同。 |
+| AutoDL 窄测试 | 否；执行于 `bd65a71`，后续纯文档提交复用 | `/root/autodl-tmp/venvs/qwen-vllm/bin/python -m pytest` 加上述 3 个测试文件，`CUDA_VISIBLE_DEVICES=` | `28 passed in 4.69s`；证明 AutoDL CPU 解释器能执行相关合同。 |
 | AutoDL 导入检查 | 是 | 同一 qwen-vllm 解释器导入 `HarnessRunner`、`NativeToolPolicy`、`RetailTools` | `autodl-imports-ok`。 |
 
-最后一个提交 `1379ec9` 只补全了文件地图中的路径名称；没有运行时代码变化，
+文件地图提交 `1379ec9` 只补全了文件地图中的路径名称；没有运行时代码变化，
 所以复用 `bd65a71` 的窄测试是有边界的。以上命令和结果集中记录在
 `docs/reproduction.md`，不是把“291 passed”误写成本轮重新执行。
 
