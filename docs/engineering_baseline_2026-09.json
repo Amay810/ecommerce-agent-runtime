@@ -1,0 +1,40 @@
+{
+  "baseline_version": "ecommerce-agent-runtime-static-review-v1",
+  "implementation_commit": "992b092c30fcff46cbd64e6272f85161f466f4ea",
+  "implementation_worktree_clean_before_freeze": true,
+  "review_record": "docs/static_review_2026-09.md",
+  "scope": {
+    "static_review": true,
+    "cpu_only": true,
+    "real_model_called": false,
+    "gpu_called": false,
+    "skill_v0_modified": false,
+    "skill_candidate_generated": false,
+    "validation_or_locked_experiment_run": false
+  },
+  "skill_v0": {
+    "path": "skills/return_request/SKILL.md",
+    "version": "v0",
+    "sha256": "1c5d1aaf8837786157f21165cad26aa30abcb4267116a2ee4f8eea42603ee91e"
+  },
+  "environment": {
+    "python": "3.12.3",
+    "pytest": "8.4.2",
+    "numpy": "2.5.3",
+    "mcp": "1.30.0",
+    "gpu": "not used"
+  },
+  "verification": {
+    "compileall": "pass",
+    "pytest_command": ".venv/bin/python -m pytest -q",
+    "pytest_result": "283 passed",
+    "offline_skill_smoke": "4/4 RulePolicy tasks passed; deterministic offline only",
+    "mcp_integration": "included in 283 passed"
+  },
+  "limitations": [
+    "No claim about Qwen model quality or Skill effect is made.",
+    "The observed Qwen smoke traces remain model/protocol diagnosis, not a repaired model result.",
+    "A/B exploration, validation, locked, candidate promotion and external Tau3 execution remain pending.",
+    "Native model service configuration must explicitly set ARAG_LLM_BASE_URL; the wire protocol is OpenAI-compatible, not an OpenAI model selection."
+  ]
+}
