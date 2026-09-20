@@ -325,15 +325,15 @@ class NativeToolPolicy:
     def act(self, observation: AgentObservation) -> AgentAction:
         history_messages = _history_messages(observation.history)
         messages, stats = self.runtime.prepare_messages(history_messages, "")
-        # After a tool result, the valid OpenAI sequence ends with role=tool and
-        # the model must continue from that result. Do not duplicate the current
-        # user turn merely because the final history entry is not a user message.
-        current_user_is_present = any(
-            message.get("role") == "user"
-            and message.get("content") == observation.current_message
-            for message in messages
-        )
-        if not current_user_is_present:
+        # ``history`` is the source of truth for message provenance.  The
+        # harness sets ``current_message`` to the latest history entry for all
+        # policy steps, including tool results.  Never infer provenance from
+        # text equality because a tool result can repeat user text (and vice
+        # versa).  In the normal harness path the latest event is already
+        # represented by ``history_messages``; only an empty history needs the
+        # compatibility fallback of treating ``current_message`` as a user
+        # message.
+        if not observation.history:
             messages.append({"role": "user", "content": observation.current_message})
         tools = native_tool_schemas(observation.tool_schemas)
         attempts: list[dict[str, Any]] = []

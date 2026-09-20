@@ -155,22 +155,53 @@ def test_tool_result_continuation_does_not_duplicate_current_user_turn():
         captured["messages"] = messages
         return NativeGeneration(content="订单状态已核实。")
 
+    result = {
+        "ok": True, "order": {"order_id": "O1", "user_id": "U1", "status": "delivered"}
+    }
     history = [
         {"role": "user", "content": "查询订单 O1"},
         {"role": "assistant", "content": "", "action": "tool_call",
          "tool_name": "get_order", "arguments": {
              "order_id": "O1", "verification_code": "123456", "user_id": "U1"}},
-        {"role": "tool", "name": "get_order", "content": json.dumps({
-            "ok": True, "order": {"order_id": "O1", "user_id": "U1", "status": "delivered"}})},
+        {"role": "tool", "name": "get_order", "content": json.dumps(result)},
     ]
     observation = AgentObservation(
-        current_message="查询订单 O1", session={"user_id": "U1"},
+        current_message=json.dumps(result), session={"user_id": "U1"},
         history=history, tool_schemas=TOOL_SCHEMAS,
     )
     NativeToolPolicy(generate).act(observation)
     messages = captured["messages"]
     assert [message["role"] for message in messages[-3:]] == ["user", "assistant", "tool"]
-    assert sum(message.get("content") == "查询订单 O1" for message in messages) == 1
+    assert sum(message["role"] == "user" for message in messages) == 1
+    assert messages[-2]["tool_calls"][0]["id"] == messages[-1]["tool_call_id"]
+
+
+def test_real_user_event_is_preserved_when_text_matches_tool_result():
+    captured = {}
+
+    def generate(messages, _tools):
+        captured["messages"] = messages
+        return NativeGeneration(content="已收到你的回复。")
+
+    repeated = '{"ok":true,"status":"pending"}'
+    history = [
+        {"role": "user", "content": "查询订单 O1"},
+        {"role": "assistant", "content": "", "action": "tool_call",
+         "tool_name": "get_order", "arguments": {
+             "order_id": "O1", "verification_code": "123456", "user_id": "U1"}},
+        {"role": "tool", "name": "get_order", "content": repeated},
+        {"role": "user", "content": repeated},
+    ]
+    NativeToolPolicy(generate).act(AgentObservation(
+        current_message=repeated,
+        session={"user_id": "U1"},
+        history=history,
+        tool_schemas=TOOL_SCHEMAS,
+    ))
+    messages = captured["messages"]
+    assert [message["role"] for message in messages[-4:]] == ["user", "assistant", "tool", "user"]
+    assert messages[-1] == {"role": "user", "content": repeated}
+    assert sum(message["role"] == "user" for message in messages) == 2
 
 
 def test_compaction_preserves_decision_fields_and_reduces_tool_payload():
