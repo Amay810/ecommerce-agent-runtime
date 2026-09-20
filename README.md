@@ -7,6 +7,7 @@
 - 新 Agent：先读 [AGENTS.md](AGENTS.md)。
 - 当前状态、已知限制和实验归属：[docs/current_status.md](docs/current_status.md)。
 - 安装、CPU smoke、检索和 Qwen 服务：[docs/reproduction.md](docs/reproduction.md)。
+- 调用链、接口和完整文件地图：[docs/architecture.md](docs/architecture.md)。
 - 工具和授权边界：[docs/tools_and_safety.md](docs/tools_and_safety.md)。
 
 ## 快速开始（CPU）
@@ -24,7 +25,7 @@ mkdir -p logs
 .venv/bin/python -m pytest -q
 ```
 
-RulePolicy 是确定性 CPU wiring smoke，不是 Qwen 结果。最近一次完整 CPU 证据为 `291 passed, 2 warnings`；MCP 测试包含在内。
+RulePolicy 是确定性 CPU wiring smoke，不是 Qwen 结果。本机当前基线的完整 CPU 证据为 `291 passed`；此前 AutoDL CPU 运行记录为 `291 passed, 2 warnings`。两者都不调用真实模型或 GPU，环境归属见 `docs/reproduction.md`。
 
 若 Python 没有 `venv`/`pip`，使用 conda 环境或 `uv venv .venv` 加
 `uv pip install --python .venv/bin/python -r requirements-dev.txt`。本机现有

@@ -594,6 +594,13 @@ class HarnessRunner:
         finally: conn.close()
 
     def run(self, task: TaskSpec) -> tuple[Trajectory, GradeResult]:
+        """Run one isolated task and return its replayable trace and grade.
+
+        The harness owns the test session, simulator replies, confirmation
+        issuance, tool-result history and post-hoc grading. Policies only see
+        the public ``AgentObservation`` projection; hidden task expectations
+        remain on ``TaskSpec``.
+        """
         random.seed(task.seed); self._reset(task)
         order_id = task.metadata.get("order_id")
         session_id = f"session_{task.task_id}_{task.seed}_{uuid.uuid4().hex[:8]}"

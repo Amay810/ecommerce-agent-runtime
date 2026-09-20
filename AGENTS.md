@@ -16,6 +16,10 @@ HarnessRunner (harness.py)
   -> TrajectoryStore and scorer
 ```
 
+Canonical handoff references: [current status](docs/current_status.md),
+[environment and reproduction](docs/reproduction.md), and the detailed
+[architecture/file map](docs/architecture.md).
+
 Start at these files:
 
 - `ecommerce_rag/harness.py`: task loading, user turns, execution loop,
@@ -54,6 +58,10 @@ the uv-managed environment used on the development machine, use:
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements-dev.txt
 ```
+
+Environment identities, the local `uv` result, AutoDL CPU/Qwen roles, Docker
+access and the absence of a checked-in GitHub Actions workflow are recorded in
+`docs/reproduction.md`; do not treat this Agent process as a host environment.
 
 The core requirements cover the SQLite harness, NumPy test support and MCP
 contract tests. Install extras only when needed:

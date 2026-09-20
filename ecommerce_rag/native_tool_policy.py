@@ -120,6 +120,14 @@ def native_tool_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _history_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert canonical harness events to provider messages.
+
+    ``history`` is the sole provenance source for non-initial turns. Assistant
+    tool-call events and following tool events are paired with a synthetic,
+    request-local id so a provider never receives a tool result as a user
+    message. A real repeated user string is preserved because roles, not text
+    equality, identify the event source.
+    """
     messages: list[dict[str, Any]] = []
     pending_call_id: str | None = None
     for index, entry in enumerate(history):
