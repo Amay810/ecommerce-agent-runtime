@@ -219,7 +219,7 @@ evidence), `test_context_compaction.py` (provider history),
 | `scripts/README.md` | Script routing; retained. |
 | `scripts/build_retrieval_index.py` | CLI wrapper for the retrieval index builder; optional retrieval. |
 | `scripts/build_amazon_5k.py`, `prepare_amazon.py`, `slice_products.py` | Download/normalize/slice external Amazon data; generated large data stays outside Git, with only stats tracked. |
-| `scripts/generate_retrieval_eval.py`, `_v2.py`, `_v3.py` | Generate retrieval evaluation JSONL sets; records retain programmatic/locked labels. |
+| `scripts/generate_retrieval_eval.py`, `scripts/generate_retrieval_eval_v2.py`, `scripts/generate_retrieval_eval_v3.py` | Generate retrieval evaluation JSONL sets; records retain programmatic/locked labels. |
 | `scripts/generate_harness_tasks.py` | Generate seeded harness task JSONL; locked task path is registered but contents were not read here. |
 | `scripts/freeze_data_source_manifest.py` | Record source revisions/hashes for data provenance. |
 | `scripts/audit_transaction_contracts.py`, `audit_tau3_process.py`, `export_trajectory_audit.py` | Run/export model-free or external-trace audits; outputs stay outside checkout unless frozen. |
@@ -246,7 +246,7 @@ evidence), `test_context_compaction.py` (provider history),
 | `ecommerce_rag/data/harness_tasks_v2.jsonl` | Larger dev/locked harness source; path registered only in this pass, locked contents not read. |
 | `ecommerce_rag/data/return_closure_smoke.jsonl` | Four-task return wiring smoke; deterministic/offline. |
 | `ecommerce_rag/data/return_closure_tasks.jsonl` | 24-task exploration/validation/locked return source; path registered only, contents not read. |
-| `ecommerce_rag/data/retrieval_eval_250.jsonl`, `_v2_300.jsonl`, `_v3_150.jsonl` | Programmatic retrieval evaluation sets; v3 is a difficult/locked-labelled holdout, not a human semantic review. |
+| `ecommerce_rag/data/retrieval_eval_250.jsonl`, `ecommerce_rag/data/retrieval_eval_v2_300.jsonl`, `ecommerce_rag/data/retrieval_eval_v3_150.jsonl` | Programmatic retrieval evaluation sets; v3 is a difficult/locked-labelled holdout, not a human semantic review. |
 | `skills/return_request/SKILL.md` | Active Skill v0 workflow guidance; loaded only when requested by Native. |
 | `docs/experiments/*.json` | Frozen experiment metadata/results retained with original commit, policy and execution class. Deterministic return arms are RulePolicy/offline; native-not-executed is explicit; candidate v1 was historically rejected. |
 | `docs/harness_v2_llm_360_regraded_v2.json` and `docs/evaluation.md` | Historical external grading summary; not current Native message-fix evidence. |
