@@ -1,0 +1,64 @@
+{
+  "manifest_version": "return-closure-freeze-v2",
+  "scoring_version": "return-closure-v2",
+  "runtime_commit": "2bf0d860b00c4d985b40060c8d09f52e8b59c433",
+  "branch": "main",
+  "worktree_dirty": false,
+  "simulated_today": "2026-07-20",
+  "date_semantics": "days_since_delivery = (simulated_today - delivered_at).days; the existing tool also preserves the policy's quality_issue exception; this first-version trial filters all tasks to quality_issue=false, opened=false, and seven-day logic",
+  "policy_path": "/home/may/Code/repos/ecommerce-agent-runtime/ecommerce_rag/data/policies.jsonl",
+  "policy_sha256": "70dbb81d35744712df7a4a55389740ae4b747e9329a171d59b943050c821fec0",
+  "retrieval_index_path": null,
+  "retrieval_index_sha256": null,
+  "tasks_path": "ecommerce_rag/data/return_closure_tasks.jsonl",
+  "tasks_sha256": "c1489365853e5fc60f8191c3ee5c4b5df856c1725fc3748a5550dd2005ff77ee",
+  "seed": {
+    "users": 1000,
+    "orders": 10000,
+    "seed": 20260720
+  },
+  "runtime": {
+    "runtime_version": "system-v1",
+    "prompt_version": "ecommerce-native-v1",
+    "compact_context": "1",
+    "max_generation_retries": 1
+  },
+  "model": {
+    "backend": "openai-compatible-native-tools",
+    "wire_protocol": "OpenAI-compatible; this does not select an OpenAI-hosted model",
+    "model": "Qwen/Qwen3-4B-Instruct-2507",
+    "base_url": null,
+    "temperature": 0
+  },
+  "budget": {
+    "max_steps": 8,
+    "repeats": 1,
+    "max_generation_retries": 1,
+    "cost_threshold": {
+      "avg_tool_calls_ratio": 1.2
+    }
+  },
+  "user_simulator": "ecommerce_rag.harness.UserSimulator:v1",
+  "scorer": "ecommerce_rag.harness.grade:return-closure-v2",
+  "model_experiment_status": "not_run_until_explicit_endpoint_is_configured",
+  "test_evidence": "290 passed in 6.35s",
+  "scoring_contract": {
+    "required_facts": [
+      "successful_nonempty_get_policy_result",
+      "successful_check_return_eligibility_with_order_and_eligible_fields"
+    ],
+    "write_confirmation": "successful_create_return_request_requires_request_issued_then_positive_user_response",
+    "optional_tools": [
+      "get_order"
+    ],
+    "tool_order": "no_fixed_order; only required facts, permitted tools, and terminal state are scored",
+    "answer_promotion_blockers": [
+      "hard_verification_pass_false",
+      "answer_fact_pass_false",
+      "unsupported_high_risk_claims_nonempty",
+      "contradicted_claims_nonempty",
+      "omitted_required_facts_nonempty"
+    ],
+    "citation_binding": "diagnostic_only_unless_an_answer_blocker_is_present"
+  }
+}
