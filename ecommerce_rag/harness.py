@@ -14,7 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
 
-from .domain import AgentAction, AgentObservation, GradeResult, TaskSpec, Trajectory
+from .domain import AgentAction, AgentObservation, GradeResult, TaskSpec, ToolCall, Trajectory
 from .confirmation import confirmation_decision
 from .evidence import convert_tool_call_to_evidence, verify_answer
 from .orders import connect, seed_database, snapshot
@@ -22,6 +22,7 @@ from .tool_schema import TOOL_SCHEMAS
 from .tools import RetailTools, WRITE_TOOLS
 from .action_constraint import apply_action_constraint
 from .legacy_closure import LegacyTaskProgressReducer, TaskProgress
+from .research_state import RESEARCH_TOOLS, budget_exhausted_answer, derive_research_state
 
 class AgentPolicy(Protocol):
     def act(self, observation: AgentObservation) -> AgentAction: ...
@@ -569,7 +570,9 @@ class HarnessRunner:
                  progress_reducer: LegacyTaskProgressReducer | None = None,
                  expose_task_progress: bool = False,
                  enforce_action_constraint: bool = False,
-                 user_simulator_factory: Any | None = None):
+                 user_simulator_factory: Any | None = None,
+                 research_enabled: bool = False,
+                 research_budget: int | None = None):
         self.db_path, self.retriever = Path(db_path), retriever
         self.policy, self.max_steps = policy or OraclePolicy(), max_steps
         if expose_task_progress and progress_reducer is None:
@@ -580,6 +583,8 @@ class HarnessRunner:
         self.expose_task_progress = expose_task_progress
         self.enforce_action_constraint = enforce_action_constraint
         self.user_simulator_factory = user_simulator_factory or UserSimulator
+        self.research_enabled = research_enabled
+        self.research_budget = research_budget
     def _reset(self, task: TaskSpec) -> None:
         if not task.initial_state: return
         conn = connect(self.db_path)
@@ -603,6 +608,9 @@ class HarnessRunner:
         """
         random.seed(task.seed); self._reset(task)
         order_id = task.metadata.get("order_id")
+        effective_research_budget = (
+            self.research_budget if self.research_budget is not None else task.research_budget
+        )
         session_id = f"session_{task.task_id}_{task.seed}_{uuid.uuid4().hex[:8]}"
         tools = RetailTools(self.db_path, self.retriever)
         simulator = self.user_simulator_factory(task)
@@ -620,8 +628,10 @@ class HarnessRunner:
         constraint_spans: list[dict[str, Any]] = []
         decision_spans: list[dict[str, Any]] = []
         confirmation_spans: list[dict[str, Any]] = []
+        research_spans: list[dict[str, Any]] = []
 
         answer = ""; failed_closed = False
+        research_calls = 0
         started = time.perf_counter()
         def decide(observation: AgentObservation, *, phase: str) -> tuple[AgentAction, int, dict[str, Any] | None]:
             retries_before = int(getattr(self.policy, "retry_count", 0))
@@ -645,7 +655,15 @@ class HarnessRunner:
             return decided, retries_used, trace
 
         for step in range(self.max_steps):
+            derived_research_state = derive_research_state(
+                history, evidence_ledger, budget=effective_research_budget
+            )
             policy_evidence = copy.deepcopy(evidence_ledger) if getattr(self.policy, "uses_evidence", False) else []
+            policy_research_state = (
+                copy.deepcopy(derived_research_state.to_dict())
+                if self.research_enabled and getattr(self.policy, "uses_research_state", False)
+                else {}
+            )
             progress = self.progress_reducer.derive(history) if self.progress_reducer else None
             session: dict[str, Any] = {"user_id": task.user_id, "session_id": session_id}
             if progress is not None:
@@ -656,6 +674,7 @@ class HarnessRunner:
                 history[-1].get("content", ""), session,
                 copy.deepcopy(history), copy.deepcopy(TOOL_SCHEMAS), step,
                 evidence_ledger=policy_evidence,
+                research_state=policy_research_state,
             )
             observations.append(asdict(observation))
             action, _initial_format_retries, policy_trace = decide(
@@ -698,6 +717,13 @@ class HarnessRunner:
                 "executed_action": executed_action,
                 "progress": progress.to_dict() if progress is not None else {},
             })
+            research_span = None
+            if self.research_enabled:
+                research_span = {
+                    "step": step,
+                    "state_before": copy.deepcopy(derived_research_state.to_dict()),
+                    "action": copy.deepcopy(executed_action),
+                }
             actions.append(asdict(action)); history.append({
                 "role": "assistant", "content": action.content, "action": action.action_type,
                 "tool_name": action.tool_name, "arguments": copy.deepcopy(action.arguments),
@@ -719,6 +745,38 @@ class HarnessRunner:
                         "operation": action.tool_name,
                         "authorized": bool(confirmation_id),
                     })
+                is_research_call = action.tool_name in RESEARCH_TOOLS
+                if is_research_call:
+                    if effective_research_budget is not None and research_calls >= effective_research_budget:
+                        result = {
+                            "ok": False,
+                            "changed": False,
+                            "error": "research_budget_exhausted",
+                            "remaining_budget": 0,
+                        }
+                        tools.calls.append(ToolCall(
+                            action.tool_name or "",
+                            copy.deepcopy(action.arguments),
+                            f"budget_{step}_{uuid.uuid4().hex[:8]}",
+                            result,
+                            "budget_exhausted",
+                            error="research_budget_exhausted",
+                        ))
+                        if research_span is not None:
+                            research_span["outcome"] = {
+                                "kind": "budget_exhausted",
+                                "tool_name": action.tool_name,
+                                "error": "research_budget_exhausted",
+                            }
+                            research_spans.append(research_span)
+                        history.append({
+                            "role": "tool", "name": action.tool_name,
+                            "content": json.dumps(result, ensure_ascii=False), "result": result,
+                        })
+                        answer = budget_exhausted_answer(derived_research_state)
+                        messages.append({"role": "assistant", "content": answer})
+                        break
+                    research_calls += 1
                 result = tools.call(
                     action.tool_name or "",
                     _session_id=session_id,
@@ -734,6 +792,15 @@ class HarnessRunner:
                 evidence_ledger.extend(converted)
                 if conversion_span is not None:
                     evidence_conversion_spans.append(conversion_span)
+                if research_span is not None:
+                    research_span["outcome"] = {
+                        "kind": "tool_result",
+                        "tool_name": call.name,
+                        "call_id": call.call_id,
+                        "ok": bool(call.result.get("ok")),
+                        "error": call.result.get("error"),
+                    }
+                    research_spans.append(research_span)
                 continue
             if action.action_type == "handoff":
                 # Identity is injected by the harness and must win: a policy that
@@ -743,6 +810,9 @@ class HarnessRunner:
                 args = {"reason": "unspecified", **action.arguments, "user_id": task.user_id}
                 result = tools.call("escalate_to_human", **args)
                 history.append({"role": "tool", "name": "escalate_to_human", "content": json.dumps(result), "result": result})
+                if research_span is not None:
+                    research_span["outcome"] = {"kind": "handoff", "ok": bool(result.get("ok"))}
+                    research_spans.append(research_span)
                 answer = action.content or "已转人工处理。"; messages.append({"role": "assistant", "content": answer}); break
             if action.action_type == "final_answer" and action.requires_user_response:
                 messages.append({"role": "assistant", "content": action.content})
@@ -796,8 +866,15 @@ class HarnessRunner:
                         "response": response,
                         **confirmation_result,
                     })
+                if research_span is not None:
+                    research_span["outcome"] = {"kind": "user_response", "response": response}
+                    research_spans.append(research_span)
                 history.append({"role": "user", "content": response}); messages.append({"role": "user", "content": response}); continue
-            answer = action.content; messages.append({"role": "assistant", "content": answer}); break
+            answer = action.content; messages.append({"role": "assistant", "content": answer})
+            if research_span is not None:
+                research_span["outcome"] = {"kind": "final_answer", "answer": answer}
+                research_spans.append(research_span)
+            break
         else: answer = "达到最大交互步数，已停止。"
         elapsed = (time.perf_counter() - started) * 1000
         after = snapshot(self.db_path, [order_id]) if order_id else {}
@@ -812,7 +889,8 @@ class HarnessRunner:
             evidence_conversion_spans=evidence_conversion_spans, progress_spans=progress_spans,
             constraint_spans=constraint_spans,
             decision_spans=decision_spans,
-            failed_closed=failed_closed)
+            failed_closed=failed_closed,
+            research_spans=research_spans)
         grade_result = grade(task, trajectory, leakage_checked=not isinstance(self.policy, OraclePolicy))
         return trajectory, grade_result
 
@@ -876,7 +954,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","llm","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","llm","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -905,9 +983,9 @@ def main() -> None:
             policy: AgentPolicy=LLMPolicy.from_env()
         elif args.policy == "native":
             from .native_tool_policy import NativeToolPolicy
-            policy = NativeToolPolicy.from_env(skill_path=args.skill, skill_enabled=bool(args.skill))
+            policy = NativeToolPolicy.from_env(skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state)
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
-    runner,store=HarnessRunner(args.db,retriever,policy),TrajectoryStore(args.store); results=[]; details=[]
+    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)
     if args.split: tasks=[task for task in tasks if task.split==args.split]
     for task in tasks:

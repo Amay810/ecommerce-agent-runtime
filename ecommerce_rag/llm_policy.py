@@ -388,7 +388,7 @@ class LLMPolicy:
                     "requires_user_response=true and ask the user for it.")
             if tool_name == "get_product":
                 product_id = arguments.get("product_id")
-                if isinstance(product_id, str) and re.fullmatch(r"P[0-9]{5}", product_id) is None:
+                if isinstance(product_id, str) and re.fullmatch(r"P[0-9]{3,5}", product_id) is None:
                     raise ActionParseError(
                         "external_product_identifier",
                         f"{product_id!r} is not an internal Pxxxxx product_id. Call search_catalog "

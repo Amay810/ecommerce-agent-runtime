@@ -15,7 +15,7 @@ EVIDENCE_CITATION = re.compile(r"\[E([1-9][0-9]*)\]")
 EVIDENCE_RANGE = re.compile(r"\[E[1-9][0-9]*\s*[-–—]\s*E?[1-9][0-9]*\]")
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？?\n])")
 _LEGACY_SOURCE_TAG = re.compile(r"\[资料\d+\]")
-_ID_FACT = re.compile(r"\b(?:P[0-9]{5}|O[0-9]{6}|POL[0-9]{3})\b", re.I)
+_ID_FACT = re.compile(r"\b(?:P[0-9]{3,5}|O[0-9]{6}|POL[0-9]{3})\b", re.I)
 _ISO_DATE = re.compile(r"\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b")
 _ZH_DATE = re.compile(r"(?<![0-9])[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日")
 _EN_DATE = re.compile(
@@ -266,7 +266,7 @@ def extract_user_context(messages: list[dict[str, Any]] | None) -> dict[str, Any
         r"([0-9]+(?:\.[0-9]+)?)\s*元(?:以内|以下|封顶)",
     ):
         budgets.extend(float(value) for value in re.findall(pattern, joined, re.I))
-    identifiers = sorted(set(re.findall(r"\b(?:P[0-9]{5}|O[0-9]{6})\b", joined, re.I)))
+    identifiers = sorted(set(re.findall(r"\b(?:P[0-9]{3,5}|O[0-9]{6})\b", joined, re.I)))
     codes = sorted(set(match.group(0) for match in re.finditer(r"(?<![0-9])[0-9]{6}(?![0-9])", joined)
                        if re.search(r"验证|校验|code", joined[max(0, match.start()-12):match.end()+12], re.I)))
     confirmations = [text for text in texts if re.search(r"(?:确认|同意|拒绝|不同意|confirm|yes|no)", text, re.I)]

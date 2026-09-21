@@ -39,6 +39,11 @@ class TaskSpec:
     # Versioned scoring contract.  The default preserves historical task/report
     # semantics; return-closure-v2 is opt-in for the new experiment set.
     scoring_version: str = "harness-v1"
+    # Optional read-only research resource limit. It is not an answer hint.
+    research_budget: int | None = None
+    # Human/evaluator-facing contract kept on TaskSpec and never copied into
+    # AgentObservation or a provider prompt.
+    evaluation_contract: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,9 @@ class AgentObservation:
     # gold data; evidence-aware policies receive the normalized form so answer
     # citations remain stable across heterogeneous tools.
     evidence_ledger: list[dict[str, Any]] = field(default_factory=list)
+    # Derived from history/evidence_ledger; this is not a second business-state
+    # store and is empty for the legacy/baseline observation path.
+    research_state: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,6 +148,9 @@ class Trajectory:
     failed_closed: bool = False
     rejected_tool_dispatch_attempts: int = 0
     semantic_fact_spans: list[dict[str, Any]] = field(default_factory=list)
+    # Auditable before/after views for multi-step evidence decisions. The
+    # authoritative facts remain tool_calls and evidence_ledger.
+    research_spans: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

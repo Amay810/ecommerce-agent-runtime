@@ -18,6 +18,7 @@ from typing import Any, Callable
 from .agent_runtime import AgentRuntime, RuntimeConfig
 from .context_compaction import context_compaction_enabled
 from .domain import AgentAction, AgentObservation
+from .research_state import render_research_state
 from .skill_loader import Skill, load_skill
 from .tool_schema import IDENTITY_TOOLS, ToolArgumentError, has_valid_verification_code, validate_arguments
 
@@ -87,6 +88,7 @@ class NativeGeneration:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     raw_message: dict[str, Any] = field(default_factory=dict)
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 class NativeActionError(ValueError):
@@ -174,12 +176,19 @@ class NativeToolPolicy:
         compact_context: bool = True,
         skill_path: str | os.PathLike[str] | None = None,
         skill_enabled: bool = False,
+        research_context: bool = False,
     ):
         self.generate = generate
         self.max_parse_retries = max_parse_retries
         self.generator_meta = generator_meta or {}
         self.compact_context = compact_context
         self.skill: Skill | None = load_skill(skill_path) if skill_enabled and skill_path else None
+        self.research_context = research_context
+        # ResearchState already contains the selected facts and source ids.
+        # Keep the raw evidence ledger out of Native A/B provider input so the
+        # only Native-arm change is the explicit research context block.
+        self.uses_evidence = False
+        self.uses_research_state = research_context
         self.retry_count = 0
         self.last_trace: dict[str, Any] = {}
         self.runtime = AgentRuntime(
@@ -202,6 +211,7 @@ class NativeToolPolicy:
         *,
         skill_path: str | os.PathLike[str] | None = None,
         skill_enabled: bool = False,
+        research_context: bool = False,
     ) -> "NativeToolPolicy":
         base_url = os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "")).strip()
         if not base_url:
@@ -221,6 +231,7 @@ class NativeToolPolicy:
             compact_context=compact,
             skill_path=skill_path,
             skill_enabled=skill_enabled,
+            research_context=research_context,
         )
 
     @staticmethod
@@ -257,6 +268,7 @@ class NativeToolPolicy:
                 prompt_tokens=usage.get("prompt_tokens"),
                 completion_tokens=usage.get("completion_tokens"),
                 raw_message=message,
+                raw_response=payload,
             )
 
         return generate
@@ -343,6 +355,11 @@ class NativeToolPolicy:
         # message.
         if not observation.history:
             messages.append({"role": "user", "content": observation.current_message})
+        if self.research_context and observation.research_state:
+            # Keep this as a provider-visible derived message rather than
+            # rewriting history. Tool results remain paired tool messages and
+            # the same AgentObservation is still the harness contract.
+            messages[0]["content"] += "\n\n" + render_research_state(observation.research_state)
         tools = native_tool_schemas(observation.tool_schemas)
         attempts: list[dict[str, Any]] = []
         error = ""
@@ -358,6 +375,10 @@ class NativeToolPolicy:
                 "protocol": "native_tool_calls",
                 "message_count": len(request_messages),
                 "tool_count": len(tools),
+                "request": {
+                    "messages": copy.deepcopy(request_messages),
+                    "tools": copy.deepcopy(tools),
+                },
                 "context_compaction": stats.to_dict() if stats else {"enabled": False},
             }
             try:
@@ -385,6 +406,15 @@ class NativeToolPolicy:
                 completion_tokens=generation.completion_tokens,
                 raw_message=generation.raw_message or {
                     "content": generation.content, "tool_calls": generation.tool_calls},
+                raw_response=generation.raw_response or {
+                    "message": generation.raw_message or {
+                        "content": generation.content, "tool_calls": generation.tool_calls},
+                    "finish_reason": generation.finish_reason,
+                    "usage": {
+                        "prompt_tokens": generation.prompt_tokens,
+                        "completion_tokens": generation.completion_tokens,
+                    },
+                },
                 action_type=action.action_type,
                 tool_name=action.tool_name,
             )
@@ -395,6 +425,7 @@ class NativeToolPolicy:
                 "generator": self.generator_meta,
                 "protocol": "native_tool_calls",
                 "runtime": self.runtime.config.to_dict(),
+                "research_context": self.research_context,
             }
             return action
 
@@ -405,5 +436,6 @@ class NativeToolPolicy:
             "generator": self.generator_meta, "protocol": "native_tool_calls",
             "final_stage": final_stage, "fallback_reason": reason,
             "runtime": self.runtime.config.to_dict(),
+            "research_context": self.research_context,
         }
         return AgentAction.handoff(reason)

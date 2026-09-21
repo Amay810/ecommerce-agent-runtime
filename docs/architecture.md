@@ -10,8 +10,8 @@
 - **Historical**：保留原始 revision、策略和执行类别的旧实验或报告。
 - **Pending**：本轮有意没有执行的项目。
 
-代码职责以本轮开始核对时的 `1379ec9` 为基线；本轮后续只改文档，不改变
-运行时代码。下面覆盖全部 tracked 项目文件。locked task 只登记路径，没有
+代码职责以本轮开始核对时的本机工作树为基线；本轮新增运行时代码和任务已整理为
+范围清楚的本机提交。下面覆盖主路径和本轮新增文件；locked task 只登记路径，没有
 打开内容。
 
 ## 主调用链
@@ -25,6 +25,7 @@ ecommerce_rag.harness CLI
   -> RetailTools.call(name, typed arguments, session/confirmation context)
   -> SQLite, policy corpus or HybridRetriever
   -> tool event in history and evidence ledger
+  -> derived ResearchState (optional B context) and next read-only decision
   -> typed user input, final answer, handoff, or max-step stop
   -> TrajectoryStore + grade(TaskSpec, Trajectory)
 ```
@@ -39,12 +40,15 @@ JSON envelope 兼容路径。Tau3 通过独立 adapter 接入，不属于本机 
 ### Policy 输入与动作转换
 
 `domain.py` 定义 `TaskSpec`、`AgentObservation`、`AgentAction`、`ToolCall`、
-`Trajectory` 和 `GradeResult`。`TaskSpec` 保存 hidden scoring expectations；
-`AgentObservation` 是 policy 能看到的 projection，hidden 字段不能进入其中。
+`Trajectory` 和 `GradeResult`。`TaskSpec` 保存 hidden scoring expectations 与
+可选 research budget；`AgentObservation` 是 policy 能看到的 projection，hidden
+字段不能进入其中。`Trajectory.research_spans` 只审计每次研究决策前后的派生状态。
 
 `harness.py` 的 `HarnessRunner.run` 建立 session，追加 user/assistant/tool
 事件，调用 `policy.act`，通过 `UserSimulator` 处理 typed input，记录
-confirmation spans，快照 SQLite，并调用 `grade`。`TrajectoryStore` 将 trace
+ confirmation spans，快照 SQLite，并调用 `grade`。启用 research 后，它从已有
+ `history + evidence_ledger` 派生一次 `ResearchState`，向具备 capability flag 的
+ policy 传递，并在 read-only retrieval 超过预算时 fail closed。`TrajectoryStore` 将 trace
 和 grade 持久化到 SQLite。
 
 `native_tool_policy.py` 的 `_history_messages` 将 canonical history 转成
@@ -63,6 +67,24 @@ prompt，补充 tool name 并对 provider copy 做可选 compaction；`validate_
 两者都不是当前 Qwen tool-call 主路径。`skill_loader.py` 和
 `skills/return_request/SKILL.md` 只提供可选的 versioned prompt guidance，不能
 改变 schema、权限、confirmation、评分或 SQLite。
+
+### 复杂咨询补证
+
+`research_state.py::derive_research_state` 不维护第二份业务事实；它从 canonical
+history 与成功工具结果生成用户约束、已取得事实及 source id、缺口、执行过的查询、
+retrieval 次数和剩余预算。`render_research_state` 只在 B 的
+`NativeToolPolicy(research_context=True)` 中追加 provider-visible context，且不
+包含 `TaskSpec.answer_expectations`、`evaluation_contract` 或 `gold_doc_ids`。
+`budget_exhausted_answer` 在预算耗尽时列出仍无法确认的缺口。
+
+`research_policy.py::EvidenceStateRulePolicy` 是 CPU-only wiring 替身：它按缺口
+决定继续 `search_catalog`、`get_product`、`compare_products`、`get_policy`、
+`get_order` 或明确未知，不是模型策略。`research_fixture.py` 只把已提交的商品/政策
+JSONL 做确定性 lexical 检索；生产路径仍是 `HybridRetriever`。
+
+A/B 的含义是：A 使用当前 policy-visible retrieval 行为；B 保持同一任务、工具、
+模型（Native 时）、seed、session reset、budget 和 max steps，只增加结构化补证
+状态及其 trace。B 不修改 Skill、权限、确认协议或写工具。
 
 ### 可信执行与状态
 
@@ -134,9 +156,9 @@ SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 inde
 因此，“文件被保留”与“文件中的每个数字已重新验证”是两件事；实验文件的
 数字只在上述原始 JSON 和其记录的执行类别内成立。
 
-本轮完成范围是文件用途和关键接口依据的整理，不是逐个独立复核所有文件内容或
-所有历史数字。部分文件目前只登记用途；历史 120-task/360-trajectory 的原始轨迹
-不在当前 checkout，相关汇总只能按现有 JSON 和 `docs/evaluation.md` 标为历史资料。
+本轮新增补证状态和任务入口已用本机 CPU 替身执行；真实模型对查询选择、回答事实
+覆盖、来源支持和泛化收益仍未验证。历史 120-task/360-trajectory 的原始轨迹不在
+当前 checkout，相关汇总只能按现有 JSON 和 `docs/evaluation.md` 标为历史资料。
 
 ## 文件地图
 
@@ -182,6 +204,9 @@ SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 inde
 | `ecommerce_rag/config.py` | Env-controlled paths and retrieval/LLM defaults; imported by tools/indexes. |
 | `ecommerce_rag/skill_loader.py` | Parses Skill metadata/content and computes content hash; used by Native. |
 | `ecommerce_rag/context_compaction.py` | Provider-history compaction and stats; compaction/native tests. |
+| `ecommerce_rag/research_state.py` | Derived constraints/facts/gaps/query history/budget projection and fail-closed answer for multi-round read-only evidence gathering. |
+| `ecommerce_rag/research_policy.py` | Deterministic CPU substitute that follows the research-state gaps; not a model baseline. |
+| `ecommerce_rag/research_fixture.py` | Checked-in lexical retriever substitute for CPU wiring only; production retrieval remains hybrid/indexed. |
 | `ecommerce_rag/mcp_server.py` | Optional MCP server and façade over `RetailTools`; MCP tests. |
 | `ecommerce_rag/retail_protocol.py` | External/Tau3 write surface constants; write-tool/schema tests. |
 | `ecommerce_rag/legacy_closure.py` | Optional progress state for legacy return workflows; legacy progress tests. |
@@ -197,8 +222,8 @@ SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 inde
 
 ### 测试
 
-每个测试文件都是对应模块的 executable contract。本地完整回归的旧记录是
-291 passed；本轮只执行了 `docs/reproduction.md` 中列出的窄测试。保留的测试是：
+每个测试文件都是对应模块的 executable contract。本轮本机完整回归为
+299 passed；保留的测试是：
 
 `test_agent_runtime.py` (provider runtime), `test_native_tool_policy.py`
 (native parsing/provenance), `test_llm_policy.py` and
@@ -216,6 +241,8 @@ evidence), `test_context_compaction.py` (provider history),
 `test_transaction_audit.py` (audits), `test_tau3_retail_v1.py` and
 `test_tau3_retail_nscc_job.py` (external job contracts), `test_verified_sft.py`
 (dataset conversion), and `test_skill_compare.py` (candidate decision rules).
+本轮新增 `test_research_state.py`，覆盖状态推导、Native A/B 投影、连续检索、任务
+隔离、预算停止和 hidden evaluation contract 不泄漏。
 
 ### Scripts 与集群 wrapper
 
@@ -230,6 +257,7 @@ evidence), `test_context_compaction.py` (provider history),
 | `scripts/audit_transaction_contracts.py`, `audit_tau3_process.py`, `export_trajectory_audit.py` | Run/export model-free or external-trace audits; outputs stay outside checkout unless frozen. |
 | `scripts/measure_context_compaction.py`, `diagnose_llm_trace.py` | Offline trace/context diagnostics; not default CPU smoke. |
 | `scripts/run_skill_trial.py`, `compare_skill_trials.py`, `propose_skill_patch.py`, `freeze_return_closure.py` | Historical Skill candidate generation/validation/comparison/freeze tooling; deterministic arms are not model evidence. |
+| `scripts/run_research_trial.py` | Paired A/B runner for complex-research exploration/validation; records execution class, spans, tool/token/latency and evidence-support diagnostics. |
 | `scripts/run_phase1_write_gate.py` | Runs synthetic write-gate probes. |
 | `scripts/build_verified_ecommerce_sft.py`, `validate_verified_sft.py` | Optional audited SFT-data build/validation; no training is run here. |
 | `scripts/run_tau3_retail_v1.py`, `_tau3_cli_with_frozen_judge.py` | External Tau3/Tau2 evaluation wrappers; not local CPU path. |
@@ -251,6 +279,8 @@ evidence), `test_context_compaction.py` (provider history),
 | `ecommerce_rag/data/harness_tasks_v2.jsonl` | Larger dev/locked harness source; path registered only in this pass, locked contents not read. |
 | `ecommerce_rag/data/return_closure_smoke.jsonl` | Four-task return wiring smoke; deterministic/offline. |
 | `ecommerce_rag/data/return_closure_tasks.jsonl` | 24-task exploration/validation/locked return source; path registered only, contents not read. |
+| `ecommerce_rag/data/complex_research_exploration.jsonl` | Six locally auditable complex consultations over checked-in products, policies and one read-only seeded order; exploratory engineering set. |
+| `ecommerce_rag/data/complex_research_validation.jsonl` | Two separate holdout-style validation consultations; not a rephrased copy of exploration and not yet a model result. |
 | `ecommerce_rag/data/retrieval_eval_250.jsonl`, `ecommerce_rag/data/retrieval_eval_v2_300.jsonl`, `ecommerce_rag/data/retrieval_eval_v3_150.jsonl` | Programmatic retrieval evaluation sets; v3 is a difficult/locked-labelled holdout, not a human semantic review. |
 | `skills/return_request/SKILL.md` | Active Skill v0 workflow guidance; loaded only when requested by Native. |
 | `docs/experiments/*.json` | Frozen experiment metadata/results retained with original commit, policy and execution class. Deterministic return arms are RulePolicy/offline; native-not-executed is explicit; candidate v1 was historically rejected. |
@@ -264,6 +294,7 @@ evidence), `test_context_compaction.py` (provider history),
 | `docs/architecture.md` | This canonical call-chain/interface/file map; retained. |
 | `docs/current_status.md` | Short current code, environment and experiment status; retained as the single status entry. |
 | `docs/reproduction.md` | Environment matrix, install/start commands, evidence provenance and known issues; retained as the single reproduction entry. |
+| `docs/complex_research.md` | This round's task data audit, A/B contract, trace fields, reference mechanisms and next AutoDL handoff. |
 | `docs/tools_and_safety.md` | Tool surface, trusted confirmation and fail-closed interpretation; retained. |
 | `docs/transaction_contracts.md` | How to run the model-free transaction audit; retained. |
 | `docs/retrieval.md` | Index build command and retrieval result boundaries; retained. |
@@ -286,6 +317,7 @@ evidence), `test_context_compaction.py` (provider history),
 ## 本地图不能证明的内容
 
 消息来源修复已做静态核对和窄 CPU 测试，但对真实 Qwen action selection 的影响
-仍是 Pending。AutoDL 当前无可见 GPU、没有 vLLM service。当前 checkout 没有
-GitHub Actions workflow，因此不声称有 CI 结果。deterministic Rule/Oracle 报告
-只能证明 wiring 和 guard contract，不能证明 Skill 有效或模型质量。
+仍是 Pending；Skill v0 的“普通文本”诊断也没有在本轮修复。AutoDL 尚未同步，
+没有 vLLM/model 执行证据。当前 checkout 没有 GitHub Actions workflow，因此不
+声称有 CI 结果。deterministic Rule/Oracle 报告只能证明 wiring、状态传递和 guard
+contract，不能证明 Skill 有效、模型质量或泛化收益。

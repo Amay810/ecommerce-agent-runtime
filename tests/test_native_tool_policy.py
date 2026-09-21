@@ -70,6 +70,9 @@ def test_native_tool_call_injects_user_id_and_validates_arguments():
     assert action.tool_name == "get_order"
     assert action.arguments["user_id"] == "U1"
     assert policy.last_trace["protocol"] == "native_tool_calls"
+    attempt = policy.last_trace["attempts"][0]
+    assert attempt["request"]["messages"][0]["role"] == "system"
+    assert attempt["raw_response"]["message"]["tool_calls"][0]["function"]["name"] == "get_order"
 
 
 def test_openai_generator_uses_native_tools_wire_format():
@@ -89,6 +92,7 @@ def test_openai_generator_uses_native_tools_wire_format():
     assert "response_format" not in body
     assert generation.tool_calls[0]["function"]["name"] == "get_product"
     assert generation.prompt_tokens == 20
+    assert generation.raw_response["choices"][0]["message"]["tool_calls"][0]["id"] == "call_1"
 
 
 def test_native_env_requires_endpoint_and_defaults_to_project_model(monkeypatch):

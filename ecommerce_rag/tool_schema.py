@@ -37,10 +37,13 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "get_product",
         "evidence_bearing": True,
-        "description": "Fetch one product card by internal ID returned by search_catalog. Product names, model numbers and SKUs must be searched first.",
+        "description": "Fetch one product card by an internal P-prefixed ID returned by search_catalog. Product names, model numbers and SKUs must be searched first.",
         "parameters": {
             "type": "object",
-            "properties": {"product_id": {"type": "string", "pattern": r"P[0-9]{5}"}},
+            # The checked-in small corpus uses P001..P040 while the seeded
+            # business environment uses five digits. Accept both internal
+            # forms; external SKU-like identifiers still fail closed.
+            "properties": {"product_id": {"type": "string", "pattern": r"P[0-9]{3,5}"}},
             "required": ["product_id"],
         },
     },
