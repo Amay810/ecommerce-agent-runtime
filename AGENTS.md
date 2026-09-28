@@ -1,7 +1,13 @@
 # Agent handoff
 
-这是一个带可信工具边界的电商 Agent runtime。只在本仓库内工作，不修改同级
-`tau3-grpo` 或 `fintool-rl`。
+这是一个带可信工具边界的电商 Agent runtime。所有改动限于本仓库的 runtime、typed
+tools、SQLite 状态、retrieval、evaluation harness 和已记录的外部 adapter；不修改同级
+`tau3-grpo` 或 `fintool-rl`。不得添加训练基础设施，也不得把凭据、模型、缓存或日志
+提交进 Git。
+
+Rule/Oracle/CPU 结果只能作为 deterministic wiring 或安全合同证据，不能报告成模型
+质量、Skill 效果或泛化结果。冻结实验产物必须保留原始 revision、代码/评分归属和
+execution class；不要用当前代码重标旧结果。
 
 ## Main path
 
@@ -50,6 +56,11 @@ Canonical handoff references: [current status](docs/current_status.md),
 `docs/current_status.md` 和相关验证记录，再根据 diff 决定验证范围。只改
 文档时复用既有测试；改了 runtime、Schema、依赖或测试发现规则时跑相关测试；
 只有这些核心部分发生变化或明确需要发布级检查时才跑完整回归。
+
+每次报告改动前运行最小相关的 import、compile 或 test，并明确结果来自本机 CPU
+deterministic policy、真实模型服务还是外部环境；不要把未执行、不可复现或不同
+代码状态的结果合并成一个结论。完整命令和环境身份见
+`docs/reproduction.md`，评分版本和历史结果见 `docs/evaluation.md`。
 
 本机推荐使用已经验证过的 uv 路径：
 

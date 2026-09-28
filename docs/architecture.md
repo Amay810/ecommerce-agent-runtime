@@ -168,7 +168,7 @@ SentenceTransformers/FAISS 或 NumPy、BM25/RRF 和可选 reranker。生成 inde
 |---|---|
 | `README.md` | Short public overview and links to this map, status, reproduction and safety; retained. |
 | `AGENTS.md` | New-agent navigation and commands; retained and kept short. |
-| `CLAUDE.md` | Compatibility handoff that points to `AGENTS.md`; retained to avoid a second instruction set. |
+| `AGENTS.md` |唯一项目 Agent 指令、边界、证据口径和修改验证要求；保留为唯一指令入口。 |
 | `.env.example` | Non-secret examples for local/native Qwen, retrieval and optional Tau3; retained. |
 | `.gitignore` | Excludes credentials, databases, logs, caches, virtualenvs, generated indexes and model outputs; retained. |
 | `.gitattributes` | Git text/line-ending policy; retained. |
