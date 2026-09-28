@@ -155,6 +155,9 @@ class Trajectory:
     # Auditable before/after views for multi-step evidence decisions. The
     # authoritative facts remain tool_calls and evidence_ledger.
     research_spans: list[dict[str, Any]] = field(default_factory=list)
+    # Distinguishes a real final response/handoff from a max-step, budget, or
+    # user-input stop when an opt-in scorer evaluates terminal completion.
+    termination_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

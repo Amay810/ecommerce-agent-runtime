@@ -28,10 +28,12 @@ that legacy field is not the current operational headline.
 Scoring versions are additive. `harness-v1` remains the default historical
 contract and does not require a non-empty final answer for operational success.
 The opt-in `harness-v2-terminal` contract keeps the same state/tool checks and
-also requires either a non-empty final answer or a successful handoff. It is
-not a replacement for old grades: a re-score must write a separate report
-keyed by `scoring_version`, retaining the original `harness-v1` grade beside
-the new one. Citation binding, evidence coverage, compact observation and
+also requires an explicit trajectory termination reason of `final_answer` or a
+successful `handoff`. A max-step, budget-exhausted, or unavailable typed-input
+stop does not become complete merely because it contains stop text. It is not
+a replacement for old grades: a re-score must write a separate report keyed
+by `scoring_version`, retaining the original `harness-v1` grade beside the new
+one. Citation binding, evidence coverage, compact observation and
 retrieval-experience changes are separate experiments and are not silently
 included in either task-success definition.
 

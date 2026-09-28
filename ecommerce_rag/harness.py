@@ -502,7 +502,10 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     state_ok = not state_diff
     handoff = any(c.name == "escalate_to_human" and c.result.get("ok") for c in trajectory.tool_calls)
     final_answer_present = bool(str(trajectory.final_answer or "").strip())
-    terminal_completion = final_answer_present or handoff
+    terminal_completion = (
+        (trajectory.termination_reason == "final_answer" and final_answer_present)
+        or (trajectory.termination_reason == "handoff" and handoff)
+    )
     success = (state_ok and compliant and recall == 1.0 and handoff == handoff_expected
                and not required_tool_failure and required_facts_pass
                and confirmation_protocol_pass and not interaction_protocol_failure
@@ -646,7 +649,7 @@ class HarnessRunner:
         confirmation_spans: list[dict[str, Any]] = []
         research_spans: list[dict[str, Any]] = []
 
-        answer = ""; failed_closed = False
+        answer = ""; termination_reason = ""; failed_closed = False
         research_calls = 0
         started = time.perf_counter()
         def decide(observation: AgentObservation, *, phase: str) -> tuple[AgentAction, int, dict[str, Any] | None]:
@@ -790,6 +793,7 @@ class HarnessRunner:
                             "content": json.dumps(result, ensure_ascii=False), "result": result,
                         })
                         answer = budget_exhausted_answer(derived_research_state)
+                        termination_reason = "budget_exhausted"
                         messages.append({"role": "assistant", "content": answer})
                         break
                     research_calls += 1
@@ -829,7 +833,9 @@ class HarnessRunner:
                 if research_span is not None:
                     research_span["outcome"] = {"kind": "handoff", "ok": bool(result.get("ok"))}
                     research_spans.append(research_span)
-                answer = action.content or "已转人工处理。"; messages.append({"role": "assistant", "content": answer}); break
+                answer = action.content or "已转人工处理。"
+                termination_reason = "handoff"
+                messages.append({"role": "assistant", "content": answer}); break
             if action.action_type == "final_answer" and action.requires_user_response:
                 messages.append({"role": "assistant", "content": action.content})
                 if requested_input_type == "confirmation":
@@ -865,12 +871,15 @@ class HarnessRunner:
                                       "requested_input_type": requested_input_type,
                                       "response": None, "protocol_error": str(exc)})
                     answer = action.content
+                    termination_reason = "user_input_protocol_error"
                     break
                 sim_spans.append({"step": step, "request": action.content,
                                   "requested_input_type": requested_input_type,
                                   "response": response})
                 if response is None:
-                    answer = action.content; break
+                    answer = action.content
+                    termination_reason = "user_input_unavailable"
+                    break
                 if requested_input_type == "confirmation":
                     confirmation_result = tools.record_user_confirmation(
                         session_id=session_id,
@@ -886,12 +895,16 @@ class HarnessRunner:
                     research_span["outcome"] = {"kind": "user_response", "response": response}
                     research_spans.append(research_span)
                 history.append({"role": "user", "content": response}); messages.append({"role": "user", "content": response}); continue
-            answer = action.content; messages.append({"role": "assistant", "content": answer})
+            answer = action.content
+            termination_reason = "final_answer"
+            messages.append({"role": "assistant", "content": answer})
             if research_span is not None:
                 research_span["outcome"] = {"kind": "final_answer", "answer": answer}
                 research_spans.append(research_span)
             break
-        else: answer = "达到最大交互步数，已停止。"
+        else:
+            answer = "达到最大交互步数，已停止。"
+            termination_reason = "max_steps"
         elapsed = (time.perf_counter() - started) * 1000
         after = snapshot(self.db_path, [order_id]) if order_id else {}
         retrievals = [asdict(c) for c in tools.calls if c.name in {"search_catalog", "get_product", "compare_products", "get_policy"}]
@@ -906,7 +919,7 @@ class HarnessRunner:
             constraint_spans=constraint_spans,
             decision_spans=decision_spans,
             failed_closed=failed_closed,
-            research_spans=research_spans)
+            research_spans=research_spans, termination_reason=termination_reason)
         grade_result = grade(task, trajectory, leakage_checked=not isinstance(self.policy, OraclePolicy))
         return trajectory, grade_result
 

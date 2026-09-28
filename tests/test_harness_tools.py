@@ -38,7 +38,10 @@ class HarnessToolTests(unittest.TestCase):
         scoring_version=SCORING_VERSION_HARNESS_V2_TERMINAL,
     )
     incomplete = grade(task, Trajectory("tr-v2-incomplete", task.task_id, 1))
-    complete = grade(task, Trajectory("tr-v2-complete", task.task_id, 1, final_answer="已完成。"))
+    complete = grade(task, Trajectory(
+        "tr-v2-complete", task.task_id, 1,
+        final_answer="已完成。", termination_reason="final_answer",
+    ))
     self.assertFalse(incomplete.success)
     self.assertEqual(incomplete.failure_type, "incomplete-terminal")
     self.assertFalse(incomplete.terminal_completion)
@@ -56,11 +59,78 @@ class HarnessToolTests(unittest.TestCase):
     trajectory = Trajectory(
         "tr-v2-handoff", task.task_id, 1,
         tool_calls=[ToolCall("escalate_to_human", {}, "handoff", {"ok": True}, "now")],
+        termination_reason="handoff",
     )
     result = grade(task, trajectory)
     self.assertTrue(result.success)
     self.assertFalse(result.final_answer_present)
     self.assertTrue(result.terminal_completion)
+
+ def test_harness_v2_rejects_max_steps_even_with_stop_text(self):
+    class ToolLoop:
+     def act(self, _observation):
+      return AgentAction.tool_call("get_policy", policy_type="return")
+
+    task = TaskSpec(
+        "v2-max-steps", "lookup", "U0001", "查询", 1,
+        allowed_tools=["get_policy"],
+        scoring_version=SCORING_VERSION_HARNESS_V2_TERMINAL,
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        db = Path(directory) / "max-steps.sqlite"
+        seed_database(db)
+        trajectory, result = HarnessRunner(db, policy=ToolLoop(), max_steps=1).run(task)
+    self.assertEqual(trajectory.termination_reason, "max_steps")
+    self.assertTrue(result.final_answer_present)
+    self.assertFalse(result.terminal_completion)
+    self.assertFalse(result.success)
+    self.assertEqual(result.failure_type, "incomplete-terminal")
+
+ def test_v1_and_v2_both_reject_last_required_tool_failure(self):
+    calls = [ToolCall("get_policy", {"policy_type": "return"}, "failed", {"ok": False}, "now")]
+    for version in ("harness-v1", SCORING_VERSION_HARNESS_V2_TERMINAL):
+        with self.subTest(version=version):
+            task = TaskSpec(
+                "last-tool-failed", "lookup", "U0001", "查询", 1,
+                allowed_tools=["get_policy"], scoring_version=version,
+            )
+            result = grade(task, Trajectory(
+                f"tr-{version}", task.task_id, 1, final_answer="无法完成。",
+                termination_reason="final_answer", tool_calls=calls,
+            ))
+            self.assertFalse(result.success)
+            self.assertEqual(result.failure_type, "required-tool-failed")
+
+ def test_v1_and_v2_continue_after_typed_user_input(self):
+    class AskThenFinish:
+     def __init__(self):
+      self.calls = 0
+
+     def act(self, _observation):
+      self.calls += 1
+      if self.calls == 1:
+       return AgentAction.answer(
+           "请提供六位验证码。", requires_user_response=True,
+           requested_input_type="verification_code",
+       )
+      return AgentAction.answer("已继续完成。")
+
+    for version in ("harness-v1", SCORING_VERSION_HARNESS_V2_TERMINAL):
+        with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+            task = TaskSpec(
+                f"typed-input-{version}", "lookup", "U0001", "查询", 1,
+                scoring_version=version,
+            )
+            trajectory, result = HarnessRunner(
+                Path(directory) / "typed.sqlite", policy=AskThenFinish(), max_steps=3,
+            ).run(task)
+            self.assertTrue(result.success)
+            self.assertEqual(trajectory.termination_reason, "final_answer")
+            self.assertEqual(trajectory.user_simulator_spans[0]["response"], "000000")
+            self.assertEqual(
+                [message["role"] for message in trajectory.messages],
+                ["user", "assistant", "user", "assistant"],
+            )
 
  def _return_v2_task(self, *, write=True):
     return TaskSpec(
