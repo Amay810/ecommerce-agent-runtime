@@ -4,7 +4,7 @@ The output schema is intentionally the same small contract used by the
 retriever: ``embeddings.npy``, ``chunks.jsonl``, ``parents.json`` and a
 provenance manifest.  Product
 and policy sources remain separate through ``source_type`` and their metadata,
-while parent cards preserve the evidence context returned by ``format_context``.
+while parent cards preserve the evidence context used by retrieval results.
 """
 
 from __future__ import annotations

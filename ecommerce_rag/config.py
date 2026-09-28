@@ -13,9 +13,8 @@ LOG_DIR = PROJECT_ROOT / "logs"
 PRODUCT_DATA_PATH = Path(os.environ.get("ERAG_PRODUCTS", DATA_DIR / "sample_products.jsonl"))
 POLICY_DATA_PATH = Path(os.environ.get("ERAG_POLICIES", DATA_DIR / "policies.jsonl"))
 
-# Freshness guardrail: e-commerce point-in-time. When an answer asserts price/inventory/policy,
-# require the backing item's `updated_at` to be within MAX_AGE_DAYS, else hedge (downgrade to caution).
-FRESHNESS_GUARD_ENABLED = os.environ.get("ERAG_FRESHNESS_GUARD", "1") == "1"
+# Freshness diagnostic: e-commerce point-in-time. When an answer asserts
+# price/inventory/policy, compare the backing item's `updated_at` with this age.
 FRESHNESS_MAX_AGE_DAYS = int(os.environ.get("ERAG_FRESHNESS_MAX_AGE_DAYS", "30"))
 
 EMBED_MODEL = os.environ.get(

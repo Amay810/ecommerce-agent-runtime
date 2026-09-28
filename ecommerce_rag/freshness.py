@@ -89,12 +89,3 @@ def assess(snapshot: dict, intent: str, answer: str, now: datetime | None = None
         reasons.append(f"引用的{'/'.join(sorted(claims))}信息缺少更新时间，无法确认时效。")
     return {"triggered": True, "status": status, "claims": sorted(claims),
             "reasons": reasons, "max_age_days": max_age_days}
-
-
-def should_downgrade(status: str) -> bool:
-    return status in ("stale", "unverified")
-
-
-def note(status: str, claims: list[str]) -> str:
-    kinds = "/".join(claims) if claims else "价格/库存/政策"
-    return f"提示：{kinds}信息可能变动，请以商品页实时信息为准；如需精确确认可转人工客服。"

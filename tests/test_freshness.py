@@ -29,16 +29,16 @@ class FreshnessTests(unittest.TestCase):
 
     def test_fresh_path(self):
         v = freshness.assess(_snap("2026-06-10"), "recommend", "价格 99 元", now=NOW, max_age_days=30)
-        assert v["status"] == "fresh" and freshness.should_downgrade(v["status"]) is False
+        assert v["status"] == "fresh"
 
     def test_stale_path(self):
         v = freshness.assess(_snap("2026-01-01"), "recommend", "价格 99 元", now=NOW, max_age_days=30)
-        assert v["status"] == "stale" and freshness.should_downgrade(v["status"]) is True
+        assert v["status"] == "stale"
         assert v["reasons"]
 
     def test_unverified_path(self):
         v = freshness.assess(_snap(None), "recommend", "价格 99 元", now=NOW)
-        assert v["status"] == "unverified" and freshness.should_downgrade(v["status"]) is True
+        assert v["status"] == "unverified"
 
 if __name__ == "__main__":
     unittest.main()

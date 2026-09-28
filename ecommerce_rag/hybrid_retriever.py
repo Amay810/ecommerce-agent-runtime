@@ -294,13 +294,3 @@ class HybridRetriever:
         rerank_ms=(time.perf_counter()-rerank_started)*1000 if self.reranker else 0.0
         self.last_timing={"dense_ms":dense_ms,"bm25_ms":bm25_ms,"fusion_filter_ms":fusion_ms,"rerank_ms":rerank_ms,"total_ms":(time.perf_counter()-total_started)*1000,"dense_backend":self.dense_backend}
         return candidates[:top_k]
-
-    def format_context(self, chunks: list[dict]) -> str:
-        seen, blocks = set(), []
-        for c in chunks:
-            doc_id = c["doc_id"]
-            if doc_id in seen:
-                continue
-            seen.add(doc_id)
-            blocks.append(f"[资料{len(blocks) + 1}]\n{self.parents[doc_id]}")
-        return "\n\n".join(blocks)
