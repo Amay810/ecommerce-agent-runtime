@@ -1,8 +1,9 @@
 # 实验记录索引
 
-本页只做索引，不把实验代码、SQLite 或原始轨迹拼进 Markdown。当前稳定基线是
-`67566944ad79c03feaf42a9ca72a5d20571cad06`；主路径保持 legacy observation、full
-tools、answer contract off、retrieval experience off。下表中的 compact observation、
+本页只做索引，不把实验代码、SQLite 或原始轨迹拼进 Markdown。当前清理候选是
+`8ae1c0e4ad6ec62eb73a5f2b72a6a41910c389db`；清理前 `67566944` / `313 passed` 保留为
+对照。主路径保持 legacy observation、full tools、answer contract off、retrieval
+experience off。下表中的 compact observation、
 selective tools、evidence-answer-v1、retrieval experience 都是隔离实验，不能当作默认
 能力或已验证的模型收益。
 

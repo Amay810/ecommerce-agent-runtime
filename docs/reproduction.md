@@ -1,10 +1,11 @@
 # 复现与环境身份
 
-## 本轮文档基线
+## 当前清理候选
 
-文档整理以 `67566944ad79c03feaf42a9ca72a5d20571cad06` 为基线。该基线已有本机
-CPU 完整回归记录 `313 passed`；本轮只做文档、manifest 和静态引用检查，不重跑
-Qwen、24-task 或 360-task 实验。
+当前清理候选为 `8ae1c0e4ad6ec62eb73a5f2b72a6a41910c389db`，本机 CPU 完整回归为
+`262 passed`。清理前基线 `67566944ad79c03feaf42a9ca72a5d20571cad06` 的
+`313 passed` 仍作为对照；减少的 51 个测试属于已删除的旧 LLM 专属路径。本轮不运行
+Qwen、GPU、24-task 或 360-task 历史模型实验。
 
 每条执行证据都应同时记录代码 revision、worktree、解释器、任务/配置、命令和结果。
 `Executed` 是确实执行过的命令，`Historical` 是复用旧记录，`Static` 是源码/配置核对，
@@ -14,7 +15,7 @@ Qwen、24-task 或 360-task 实验。
 
 | 环境 | 用途 | 当前状态 |
 |---|---|---|
-| 本机 `.venv` | 文档静态检查、CPU smoke、pytest、确定性 harness | 可用；本轮不因纯文档变更重跑完整回归 |
+| 本机 `.venv` | 文档静态检查、CPU smoke、pytest、确定性 harness | 可用；已执行当前候选的 CPU 回归 |
 | AutoDL `/root/autodl-tmp` | 本地 Qwen/vLLM 和固定模型实验 | 当前无可见 GPU；本轮不启动服务 |
 | Docker | 可选 core import smoke | 当前用户无 Docker socket 验证权限 |
 | GitHub Actions | CI | 当前 checkout 没有 `.github/workflows`，无 CI 证据 |
@@ -50,7 +51,8 @@ Skill 效果或泛化。需要完整 CPU 回归时使用：
 .venv/bin/python -m pytest -q
 ```
 
-本轮不重新执行上述命令；`67566944` 的既有完整回归记录是 `313 passed`。
+当前候选已执行 `.venv/bin/python -m pytest -q`，结果为 `262 passed`；`67566944` 的
+`313 passed` 是清理前对照，不与当前结果相加。
 
 按需安装额外能力：`requirements-retrieval.txt` 提供 SentenceTransformers/jieba/FAISS，
 `requirements-data.txt` 提供 Amazon 数据准备。当前运行器不再提供旧 JSON/本地

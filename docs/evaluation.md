@@ -15,6 +15,10 @@
 不能覆盖旧 JSON/SQLite，也不能把 dirty 状态下的重算称成原实验复现。重算必须保留
 原始 grade、代码 revision、任务集和新版本结果的并列关系。
 
+当前 runtime 清理候选 `8ae1c0e` 的 CPU 回归为 `262 passed`。清理前 `67566944` 的
+`313 passed` 保留为对照；差异是删除 51 个旧 LLM 专属测试，不改变历史评分语义或
+`303/360` 的 provenance。
+
 ## Tracked 360 summary（历史汇总）
 
 `docs/harness_v2_llm_360_regraded_v2.json` 是当前仓库保留的 machine-readable summary，

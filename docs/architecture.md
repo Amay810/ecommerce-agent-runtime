@@ -70,8 +70,9 @@ Native 主路径就删除。
   拼进 Markdown。
 - `harness-v1` 与 `harness-v2-terminal` 是 additive scoring versions；新评分写入
   独立报告，不能覆盖历史 grade。定义和 303/360 provenance 见 [evaluation](evaluation.md)。
-- 当前稳定基线的既有 CPU 记录是 `67566944` / `313 passed`；这不是模型结果。实验
-  数字和 raw artifact 路径/哈希集中在 [实验索引](experiments/README.md)。
+- 当前清理候选的 CPU 记录是 `8ae1c0e` / `262 passed`；清理前 `67566944` /
+  `313 passed` 仍作为对照，二者都不是模型结果。实验数字和 raw artifact 路径/哈希
+  集中在 [实验索引](experiments/README.md)。
 
 ## 代码与文档入口
 

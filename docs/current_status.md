@@ -1,11 +1,13 @@
 # 当前状态
 
-## 稳定基线
+## 稳定候选
 
-- 本轮文档与实验记录以 `67566944ad79c03feaf42a9ca72a5d20571cad06` 为代码基线。
-  进入项目时仍以 `git rev-parse HEAD` 和当前 worktree 状态为准。
-- 该基线已有本机 CPU 完整回归记录：`313 passed`。这是 deterministic/runtime
-  验证，不是 Qwen 质量证据；本次文档整理不重跑完整回归。
+- 当前清理候选为 `8ae1c0e4ad6ec62eb73a5f2b72a6a41910c389db`，本机 CPU 完整回归为
+  `262 passed`。这是 deterministic/runtime 验证，不是 Qwen 质量证据。
+- 清理前稳定基线 `67566944ad79c03feaf42a9ca72a5d20571cad06` 的记录仍保留为
+  `313 passed`；减少的 51 个测试全部属于已删除的旧 LLM 专属执行路径，不是回归。
+- 进入项目时仍以 `git rev-parse HEAD` 和当前 worktree 状态为准；本轮不运行 Qwen、GPU
+  或历史模型实验。
 - 主路径是 `HarnessRunner` + `NativeToolPolicy` + `RetailTools.call`，连接 SQLite、
   可选 retrieval、evidence、typed confirmation 和 TrajectoryStore。`RulePolicy`
   仅用于 CPU wiring smoke。

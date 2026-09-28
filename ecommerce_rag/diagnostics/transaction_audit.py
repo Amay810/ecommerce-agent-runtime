@@ -1407,6 +1407,7 @@ def _markdown_summary(
     artifact: dict[str, Any],
     failure: dict[str, Any],
 ) -> str:
+    stale = adversarial["known_unresolved_gap"]
     lines = [
         "# Transaction Contract CPU Audit",
         "",
@@ -1418,10 +1419,10 @@ def _markdown_summary(
         "",
         "## Guardrail ON/OFF",
         "",
-        f"- Deterministic adversarial executions: **{adversarial['executions']}** = **{adversarial['execution_classification']['frozen_contract_applicable_violations']}** frozen-contract violation attempts + **{adversarial['execution_classification']['valid_setup_or_control_executions']}** valid setup/control executions + **{adversarial['execution_classification']['unresolved_confirmation_binding_probes']}** unresolved stale-confirmation probes.",
+        f"- Deterministic adversarial executions: **{adversarial['executions']}** = **{adversarial['execution_classification']['frozen_contract_applicable_violations']}** frozen-contract violation attempts + **{adversarial['execution_classification']['valid_setup_or_control_executions']}** valid setup/control executions + **{adversarial['execution_classification']['unresolved_confirmation_binding_probes']}** stale-confirmation probes.",
         f"- Guarded: attempts={adversarial['on']['attempts']}, blocked={adversarial['on']['blocked']}, committed={adversarial['on']['committed']}.",
         f"- Counterfactual OFF: attempts={adversarial['off']['attempts']}, blocked={adversarial['off']['blocked']}, committed={adversarial['off']['committed']}.",
-        "- Stale confirmation remains UNRESOLVED: the existing API has no prior-confirmation binding, so `confirmed=True` alone is accepted.",
+        f"- Stale confirmation probe: **{stale['status']}**; guarded post-authorization state mutation commits without binding={stale['on_state_commits_without_binding']}, while the unsafe control commits={stale['off_state_commits_without_binding']}. Cross-process ledger, crash recovery, and concurrent execution remain unverified.",
         "",
         "## Direct vs MCP",
         "",
