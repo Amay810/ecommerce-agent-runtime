@@ -1,5 +1,32 @@
 # 复现与环境身份
 
+## 第四轮干净基线（2026-09-28）
+
+本轮实施使用隔离 worktree `/tmp/ecommerce-agent-runtime-worktrees/round4-cleanup`
+和分支 `codex/round4-cleanup`，起点为干净 HEAD
+`4ca652590a9a5ca0156139d51eed447669390cff`。原 `main` 的 tracked diff、未跟踪
+实验和 `graphify-out/` 均未复制进该 worktree。
+
+使用本机已验证解释器
+`/home/may/Code/repos/ecommerce-agent-runtime/.venv/bin/python`（代码从当前
+worktree 加载）执行：
+
+```text
+pytest -q                         -> 299 passed in 11.23s
+harness contract smoke            -> 4 trajectories; task_success=1.0;
+                                    policy_compliance=1.0;
+                                    terminal_state_accuracy=1.0
+```
+
+隔离 worktree 内新建 `.venv` 时，依赖解析成功但 `pydantic==2.13.5` wheel 下载
+超时；因此上面的基线明确使用已验证的本机环境，而不是把未完成的全新环境安装
+当成验证。该安装问题不改变代码基线。
+
+AutoDL 当前 `nvidia-smi` 无可见 GPU；本轮没有新的 GPU/Qwen 执行，不能为 compact
+observation、selective tools、evidence-answer-v1、retrieval experience 或
+ResearchState 提供“实验有效”的结论。历史结果继续按其原始 runtime/checkout/
+dirty diff 保存并单独标记。
+
 以下命令默认在仓库根目录执行。本轮实现了本地复杂咨询补证 wiring、任务集和
 CPU 对照入口；不下载模型、不启动 GPU、
 不调用付费服务。`Executed` 表示已有明确命令和结果；`Historical` 表示复用

@@ -1,5 +1,23 @@
 # 当前状态
 
+## 第四轮实施基线（2026-09-28）
+
+- 本轮在隔离分支 `codex/round4-cleanup` 的干净 HEAD
+  `4ca652590a9a5ca0156139d51eed447669390cff` 上建立基线；原 `main` 工作树的
+  未提交实验没有被带入此分支。
+- 使用已验证的本机 `/home/may/Code/repos/ecommerce-agent-runtime/.venv/bin/python`
+  执行全量回归：`299 passed in 11.23s`。这是干净 HEAD 的结果，不是原 dirty
+  worktree 中曾记录的 `333 passed`。
+- 同一干净 HEAD 的 RulePolicy contract smoke 为 4/4，`task_success`、
+  `policy_compliance`、`terminal_state_accuracy` 均为 `1.0`；这只证明 CPU 接线，
+  不证明 Native/Qwen 效果。
+- 当前 AutoDL 为无卡模式，本轮未启动 vLLM、未运行新的真实 Qwen/GPU 实验。任何
+  Native 配对数字仍必须按其原始 checkout、runtime、任务集和 dirty diff 作为历史
+  证据保留，不能改写为本轮结果。
+- 本批次只修正文档 provenance；compact observation、selective tools、evidence
+  answer contract、retrieval experience 以及未决 stale confirmation 行为不进入默认
+  主路径。
+
 这是仓库的短状态入口。调用链、接口和逐文件地图见
 `docs/architecture.md`；环境身份、命令和验证出处见 `docs/reproduction.md`。
 当前 HEAD 不在文档中硬编码，进入项目时以 `git rev-parse HEAD` 为准。
