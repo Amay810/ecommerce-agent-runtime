@@ -983,7 +983,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","llm","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -1006,13 +1006,10 @@ def main() -> None:
     if args.index:
         from .hybrid_retriever import HybridRetriever
         retriever=HybridRetriever(Path(args.index))
-    if args.policy in {"llm", "native"}:
-        if args.policy == "llm":
-            from .llm_policy import LLMPolicy
-            policy: AgentPolicy=LLMPolicy.from_env()
-        elif args.policy == "native":
-            from .native_tool_policy import NativeToolPolicy
-            policy = NativeToolPolicy.from_env(skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state)
+    if args.policy == "native":
+        from .native_tool_policy import NativeToolPolicy
+        policy: AgentPolicy = NativeToolPolicy.from_env(
+            skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state)
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
     runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)

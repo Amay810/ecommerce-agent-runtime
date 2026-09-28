@@ -18,17 +18,6 @@ POLICY_DATA_PATH = Path(os.environ.get("ERAG_POLICIES", DATA_DIR / "policies.jso
 FRESHNESS_GUARD_ENABLED = os.environ.get("ERAG_FRESHNESS_GUARD", "1") == "1"
 FRESHNESS_MAX_AGE_DAYS = int(os.environ.get("ERAG_FRESHNESS_MAX_AGE_DAYS", "30"))
 
-# OpenAI-compatible hosted LLM. Examples:
-# DeepSeek: base_url=https://api.deepseek.com, model=deepseek-chat
-# Kimi:     base_url=https://api.moonshot.cn/v1, model=moonshot-v1-8k
-# Zhipu:    base_url=https://open.bigmodel.cn/api/paas/v4, model=glm-4-flash
-LLM_BASE_URL = os.environ.get(
-    "ERAG_LLM_BASE_URL",
-    os.environ.get("ARAG_LLM_BASE_URL", "https://api.deepseek.com"),
-)
-LLM_API_KEY = os.environ.get("ERAG_LLM_API_KEY", os.environ.get("ARAG_LLM_API_KEY", ""))
-LLM_MODEL = os.environ.get("ERAG_LLM_MODEL", os.environ.get("ARAG_LLM_MODEL", "deepseek-chat"))
-
 EMBED_MODEL = os.environ.get(
     "ERAG_EMBED_MODEL",
     os.environ.get("ARAG_EMBED_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"),
@@ -63,13 +52,3 @@ COMPOUND_DECOMP_ENABLED = os.environ.get("ERAG_COMPOUND_DECOMP", "1") == "1"
 MAX_RETRIEVAL_ROUNDS = int(os.environ.get("ERAG_MAX_ROUNDS", "2"))
 GROUNDING_SENT_THRESHOLD = float(os.environ.get("ERAG_GROUNDING_SENT_THRESHOLD", "0.42"))
 GROUNDING_MIN_RATIO = float(os.environ.get("ERAG_GROUNDING_MIN_RATIO", "0.5"))
-
-HANDOFF_MESSAGE = "这个问题我暂时没有找到可靠资料支撑，已建议转人工客服处理。"
-
-SYSTEM_PROMPT = """你是电商平台的智能客服助手。请严格依据【资料】回答用户问题。
-规则：
-1. 只能基于提供的资料作答，不得编造价格、参数、库存、优惠或售后政策。
-2. 事实性结论必须用 [资料N] 标注来源。
-3. 资料不足时明确说“暂时无法确认，建议联系人工客服”，不要猜测。
-4. 涉及订单、账号、支付、投诉升级或医疗/安全风险时，建议转人工。
-5. 语气友好、简洁，面向普通消费者。"""

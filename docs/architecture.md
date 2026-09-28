@@ -18,7 +18,7 @@ ecommerce_rag.harness CLI
   -> load_tasks(TaskSpec)
   -> HarnessRunner.run
   -> AgentObservation(history, session, public tool schemas, evidence)
-  -> NativeToolPolicy | RulePolicy | legacy LLMPolicy
+  -> NativeToolPolicy | RulePolicy
   -> AgentAction
   -> RetailTools.call(name, typed args, session/confirmation context)
   -> SQLite / local retrieval / evidence ledger
@@ -52,15 +52,14 @@ assistant tool call 与后续 `role=tool` result 由
 |---|---|---|---|
 | Native | `harness run --policy native` → `NativeToolPolicy` | AutoDL 本地 Qwen、OpenAI-compatible wire protocol；当前模型入口 | 显式 `--policy native`；`skill_enabled=False`、`research_context=False` |
 | Rule | `harness run --policy rule` → `RulePolicy` | 无模型；CPU wiring/guard 合同 | 仅显式用于 smoke；不解释为模型结果 |
-| legacy LLMPolicy | `harness run --policy llm`、`llm_policy.py`、`scripts/export_trajectory_audit.py` | 旧 JSON action envelope、旧轨迹诊断和历史复现 | 兼容入口；不影响 Native；不因非主路径删除 |
 | RAG/retrieval | `HybridRetriever`、`get_product/search_catalog/get_policy`、`scripts/build_retrieval_index.py` | 本地产品/政策索引；可选 SentenceTransformers/FAISS/BM25 | 不安装 retrieval extras 或不传 index 时走当前可用 fallback；索引不入 Git |
 | MCP | `mcp_server.py` 的 façade/server | MCP client/contract tests；外部工具协议复现 | 不启动 MCP server 即关闭；业务仍走 Direct typed boundary |
 | ResearchState | `HarnessRunner(research_enabled=True)`、`NativeToolPolicy(research_context=True)`、`scripts/run_research_trial.py` | 复杂咨询的缺口/来源/预算投影；Rule fixture 只做 CPU wiring | 默认不启用；实验 flag/显式构造器开启 |
 | Tau3 | `tau3_agent_adapter.py`、`tau3_retail_v1.py`、`scripts/run_tau3_retail_v1.py`、`nscc/` | 外部 Tau2/Tau3 runtime、cluster job 和 adapter 复现 | 外部依赖不可用时不执行；不属于本地 CPU smoke |
 
-`LLMPolicy` 的历史兼容价值与删除边界见实验/接口索引；当前没有证据把它改名成
-Native，也没有证据证明可以删除其旧 JSON 轨迹读取链。`RAG`、MCP、ResearchState 和
-Tau3 同样不能仅因不在 Native 主路径就删除。
+旧轨迹的只读读取仍由 `TrajectoryStore` 和 `harness replay` 提供；它不依赖已经删除的
+旧 JSON 执行器。`RAG`、MCP、ResearchState 和 Tau3 仍是兼容或可选路径，不能仅因不在
+Native 主路径就删除。
 
 ## 数据、轨迹与评分
 

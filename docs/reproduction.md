@@ -53,8 +53,9 @@ Skill 效果或泛化。需要完整 CPU 回归时使用：
 本轮不重新执行上述命令；`67566944` 的既有完整回归记录是 `313 passed`。
 
 按需安装额外能力：`requirements-retrieval.txt` 提供 SentenceTransformers/jieba/FAISS，
-`requirements-llm.txt` 提供旧 JSON/Transformers 适配器，`requirements-data.txt` 提供
-Amazon 数据准备。索引、模型缓存、SQLite 和日志不提交。
+`requirements-data.txt` 提供 Amazon 数据准备。当前运行器不再提供旧 JSON/本地
+Transformers policy；历史 SQLite/JSON 仍可通过 `TrajectoryStore` 和 `harness replay`
+只读查看。索引、模型缓存、SQLite 和日志不提交。
 
 ## Native Qwen 路径（AutoDL）
 

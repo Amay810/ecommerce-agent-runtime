@@ -35,13 +35,12 @@ mkdir -p logs
 ## 主调用链
 
 ```text
-HarnessRunner → NativeToolPolicy / RulePolicy / legacy LLMPolicy → AgentAction
+HarnessRunner → NativeToolPolicy / RulePolicy → AgentAction
              → RetailTools.call → SQLite / retrieval / evidence
              → typed input / final answer / handoff → TrajectoryStore + scorer
 ```
 
-`NativeToolPolicy` 是当前 Qwen tool-call adapter；`LLMPolicy` 是旧 JSON envelope
-兼容路径。MCP 是可选 façade，但 Direct/MCP 都汇合到 `RetailTools.call`；Tau3 是
+`NativeToolPolicy` 是当前 Qwen tool-call adapter。MCP 是可选 façade，但 Direct/MCP 都汇合到 `RetailTools.call`；Tau3 是
 外部 adapter，不属于本地 CPU smoke。稳定入口保持 legacy observation、full tools、
 answer contract off、retrieval experience off；compact observation、selective tools、
 evidence-answer-v1 和 retrieval experience 只在隔离实验中使用。

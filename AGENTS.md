@@ -14,8 +14,7 @@ execution class；不要用当前代码重标旧结果。
 ```text
 HarnessRunner (harness.py)
   -> { NativeToolPolicy（主 Qwen 路径）
-     | RulePolicy（CPU wiring 验证）
-     | LLMPolicy（旧 JSON 兼容路径） }
+     | RulePolicy（CPU wiring 验证） }
   -> AgentAction
   -> RetailTools.call
   -> SQLite / retrieval / evidence
@@ -85,7 +84,6 @@ access and the absence of a checked-in GitHub Actions workflow are recorded in
 核心依赖覆盖 SQLite harness、NumPy 和 MCP contract tests。按需安装额外层：
 
 - `requirements-retrieval.txt` for SentenceTransformers, jieba and FAISS;
-- `requirements-llm.txt` for the legacy local Transformers adapter;
 - `requirements-data.txt` for the Amazon dataset preparation script.
 
 代表性的 CPU 流程是确定性的 `RulePolicy` wiring，不是真实模型运行：

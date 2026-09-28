@@ -21,7 +21,6 @@
 |---|---|
 | `ecommerce_rag.harness run --policy rule` | 推荐 CPU contract smoke；结果不代表模型。CLI 的 policy 默认值仍按代码为 `oracle`，文档命令显式选择 `rule`。 |
 | `--policy native` / `NativeToolPolicy` | AutoDL 本地 Qwen tool-call 路径；真实效果仍需按固定配置单独记录。 |
-| `LLMPolicy` | 旧 JSON action envelope 兼容路径；保留用于历史轨迹/适配，不是主路径。 |
 | `mcp_server.py` | 可选 MCP façade；业务 dispatch 仍汇合到 `RetailTools.call`。 |
 | `ResearchState` / `run_research_trial.py` | 可选补证实验路径，默认不注入主 Native。 |
 | Tau3 adapter / `nscc/` | 外部运行环境适配，不属于本机 CPU smoke。 |
