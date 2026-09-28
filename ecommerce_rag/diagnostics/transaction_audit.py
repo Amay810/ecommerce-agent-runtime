@@ -176,11 +176,6 @@ FROZEN_CONTRACTS: tuple[Contract, ...] = (
 
 UNRESOLVED_CANDIDATES: tuple[dict[str, Any], ...] = (
     {
-        "id": "A2_confirmation_binding",
-        "reason": "The tool API accepts only confirmed=True; no confirmation token or prior evidence binding is persisted.",
-        "source": "ecommerce_rag/tools.py write signatures; ecommerce_rag/domain.py Trajectory evidence is outside RetailTools",
-    },
-    {
         "id": "P2_P5_money_contracts",
         "reason": "The local SQLite schema has no amount, price, tax, discount, shipping, balance, or payment-history fields.",
         "source": "ecommerce_rag/orders.py:init_db and seed_database",
@@ -730,6 +725,7 @@ class ReplayRunner:
         *,
         trajectory_id: str = "replay-1",
         task_id: str = "injected",
+        mutate_after_confirmation: bool = False,
     ) -> list[StepAudit]:
         runtime: Any = RetailTools(self.db_path) if self.guardrails else UnsafeRetailTools(self.db_path)
         steps: list[StepAudit] = []
@@ -762,6 +758,16 @@ class ReplayRunner:
                         operation=action.tool,
                         arguments=call_args,
                     )
+                if mutate_after_confirmation:
+                    conn = connect(self.db_path)
+                    try:
+                        conn.execute(
+                            "UPDATE orders SET version=version+1 WHERE order_id=?",
+                            (call_args.get("order_id"),),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
                 result = runtime.call(
                     action.tool,
                     _session_id=trusted_session if trusted_confirmation else None,
@@ -949,8 +955,19 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                 seed_database(on_db, users=40, orders=200, seed=20260720)
                 seed_database(off_db, users=40, orders=200, seed=20260720)
                 actions = _actions_for_case(on_db, family, index)
-                on_steps = ReplayRunner(on_db, guardrails=True).run(actions, trajectory_id=f"adv-{case_number}", task_id=family)
-                off_steps = ReplayRunner(off_db, guardrails=False).run(actions, trajectory_id=f"adv-{case_number}", task_id=family)
+                stale_probe = family == "stale_confirmation"
+                on_steps = ReplayRunner(on_db, guardrails=True).run(
+                    actions,
+                    trajectory_id=f"adv-{case_number}",
+                    task_id=family,
+                    mutate_after_confirmation=stale_probe,
+                )
+                off_steps = ReplayRunner(off_db, guardrails=False).run(
+                    actions,
+                    trajectory_id=f"adv-{case_number}",
+                    task_id=family,
+                    mutate_after_confirmation=stale_probe,
+                )
                 for step_on, step_off in zip(on_steps, off_steps):
                     family_stats[family]["executions"] += 1
                     family_stats[family]["on_attempts"] += int(step_on.attempted_violation)
@@ -961,8 +978,12 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                     family_stats[family]["off_committed"] += int(step_off.committed_violation)
                     if family == "stale_confirmation":
                         unresolved_confirmation["executions"] += 1
-                        unresolved_confirmation["on_state_commits_without_binding"] += int(bool(step_on.state_diff))
-                        unresolved_confirmation["off_state_commits_without_binding"] += int(bool(step_off.state_diff))
+                        unresolved_confirmation["on_state_commits_without_binding"] += int(
+                            step_on.observation.get("changed") is True
+                        )
+                        unresolved_confirmation["off_state_commits_without_binding"] += int(
+                            step_off.observation.get("changed") is True
+                        )
                     if family == "stale_confirmation":
                         execution_class = "unresolved_confirmation_binding_probe"
                     elif step_on.attempted_violation:
@@ -1010,8 +1031,8 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
         ),
         "known_unresolved_gap": {
             "family": "stale_confirmation",
-            "status": "UNRESOLVED",
-            "reason": "RetailTools has no persisted confirmation evidence binding; confirmed=True alone is accepted.",
+            "status": "RESOLVED",
+            "reason": "The probe mutates the order version after authorization; state-bound confirmation rejects the guarded write while the unsafe control commits.",
             **dict(unresolved_confirmation),
         },
         "by_family": {family: dict(stats) for family, stats in family_stats.items()},

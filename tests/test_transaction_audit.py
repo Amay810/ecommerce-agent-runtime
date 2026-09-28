@@ -130,8 +130,9 @@ def test_adversarial_suite_is_deterministic_and_has_required_volume():
     }
     assert report["on"]["committed"] == 0
     assert report["off"]["committed"] > 0
-    assert report["known_unresolved_gap"]["status"] == "UNRESOLVED"
-    assert report["known_unresolved_gap"]["on_state_commits_without_binding"] == 2
+    assert report["known_unresolved_gap"]["status"] == "RESOLVED"
+    assert report["known_unresolved_gap"]["on_state_commits_without_binding"] == 0
+    assert report["known_unresolved_gap"]["off_state_commits_without_binding"] == 2
 
 
 def test_direct_mcp_differential_reports_each_surface_layer():

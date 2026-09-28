@@ -43,6 +43,13 @@ def parameters_hash(parameters: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def binding_hash(binding: dict[str, Any] | None) -> str:
+    """Hash the trusted state observed when a confirmation is issued/used."""
+
+    payload = json.dumps(binding, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def confirmation_decision(text: str) -> bool | None:
     """Parse only an explicit response; negative language always wins."""
 
@@ -64,6 +71,9 @@ class ConfirmationRecord:
     status: str = "pending"  # pending | authorized | rejected | revoked
     response_text: str = ""
     authorization_id: str | None = None
+    state_binding: dict[str, Any] | None = None
+    state_binding_hash: str | None = None
+    completed_state_binding_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +87,8 @@ class ConfirmationRecord:
             "status": self.status,
             "response_text": self.response_text,
             "authorization_id": self.authorization_id,
+            "state_binding_hash": self.state_binding_hash,
+            "completed_state_binding_hash": self.completed_state_binding_hash,
         }
 
 
@@ -94,6 +106,7 @@ class ConfirmationLedger:
         operation: str,
         parameters: dict[str, Any],
         request_text: str,
+        state_binding: dict[str, Any] | None = None,
     ) -> str:
         self.revoke_session(session_id, "superseded_by_new_request")
         record = ConfirmationRecord(
@@ -104,6 +117,8 @@ class ConfirmationLedger:
             parameter_hash=parameters_hash(parameters),
             parameters=canonical_parameters(parameters),
             request_text=request_text,
+            state_binding=state_binding,
+            state_binding_hash=binding_hash(state_binding) if state_binding is not None else None,
         )
         self.records[record.request_id] = record
         return record.request_id
@@ -149,8 +164,10 @@ class ConfirmationLedger:
         user_id: str,
         operation: str,
         parameters: dict[str, Any],
+        state_binding: dict[str, Any] | None = None,
     ) -> str | None:
         expected_hash = parameters_hash(parameters)
+        expected_state_hash = binding_hash(state_binding) if state_binding is not None else None
         for record in reversed(list(self.records.values())):
             if (
                 record.session_id == session_id
@@ -158,6 +175,7 @@ class ConfirmationLedger:
                 and record.operation == operation
                 and record.parameter_hash == expected_hash
                 and record.status == "authorized"
+                and self._state_matches(record, expected_state_hash)
             ):
                 return record.authorization_id
         return None
@@ -170,10 +188,12 @@ class ConfirmationLedger:
         user_id: str | None,
         operation: str,
         parameters: dict[str, Any],
+        state_binding: dict[str, Any] | None = None,
     ) -> bool:
         if not authorization_id or not session_id or not user_id:
             return False
         expected_hash = parameters_hash(parameters)
+        expected_state_hash = binding_hash(state_binding) if state_binding is not None else None
         return any(
             record.authorization_id == authorization_id
             and record.session_id == session_id
@@ -181,8 +201,64 @@ class ConfirmationLedger:
             and record.operation == operation
             and record.parameter_hash == expected_hash
             and record.status == "authorized"
+            and self._state_matches(record, expected_state_hash)
             for record in self.records.values()
         )
+
+    def record_for_authorization(
+        self,
+        *,
+        authorization_id: str | None,
+        session_id: str | None,
+        user_id: str | None,
+        operation: str,
+        parameters: dict[str, Any],
+    ) -> ConfirmationRecord | None:
+        """Return the authorized record after scope and parameter matching."""
+
+        expected_hash = parameters_hash(parameters)
+        for record in self.records.values():
+            if (
+                record.authorization_id == authorization_id
+                and record.session_id == session_id
+                and record.user_id == user_id
+                and record.operation == operation
+                and record.parameter_hash == expected_hash
+                and record.status == "authorized"
+            ):
+                return record
+        return None
+
+    def mark_completed(
+        self,
+        *,
+        authorization_id: str | None,
+        session_id: str | None,
+        user_id: str | None,
+        operation: str,
+        parameters: dict[str, Any],
+        state_binding: dict[str, Any] | None,
+    ) -> None:
+        record = self.record_for_authorization(
+            authorization_id=authorization_id,
+            session_id=session_id,
+            user_id=user_id,
+            operation=operation,
+            parameters=parameters,
+        )
+        if record is not None and state_binding is not None:
+            record.completed_state_binding_hash = binding_hash(state_binding)
+
+    @staticmethod
+    def _state_matches(record: ConfirmationRecord, expected_hash: str | None) -> bool:
+        # Records issued through RetailTools always carry a binding. Keeping
+        # the None case compatible preserves the standalone ledger API.
+        if expected_hash is None or record.state_binding_hash is None:
+            return True
+        return expected_hash in {
+            record.state_binding_hash,
+            record.completed_state_binding_hash,
+        }
 
     def revoke_session(self, session_id: str, reason: str = "revoked") -> None:
         for record in self.records.values():

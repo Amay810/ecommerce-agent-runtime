@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .domain import ToolCall
-from .confirmation import ConfirmationLedger
+from .confirmation import ConfirmationLedger, binding_hash
 from .retail_protocol import RETAIL_WRITE_TOOLS
 from .tool_schema import validate_arguments
 from . import config, orders
@@ -153,6 +153,7 @@ class RetailTools:
             operation=operation,
             parameters=arguments,
             request_text=request_text,
+            state_binding=self._confirmation_state_binding(arguments),
         )
 
     def record_user_confirmation(self, *, session_id: str, response_text: str) -> dict[str, Any]:
@@ -176,7 +177,75 @@ class RetailTools:
             user_id=user_id,
             operation=operation,
             parameters=arguments,
+            state_binding=self._confirmation_state_binding(arguments),
         )
+
+    def _confirmation_state_binding(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Capture only trusted SQLite state relevant to a confirmed write."""
+
+        order_id = arguments.get("order_id")
+        conn = orders.connect(self.db_path)
+        try:
+            if order_id is not None:
+                row = conn.execute("SELECT * FROM orders WHERE order_id=?", (order_id,)).fetchone()
+                return {
+                    "entity": "order",
+                    "key": str(order_id),
+                    "row": dict(row) if row is not None else None,
+                }
+            user_id = arguments.get("user_id")
+            row = conn.execute(
+                "SELECT user_id, name, address, payment_methods FROM users WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            return {
+                "entity": "user",
+                "key": str(user_id),
+                "row": dict(row) if row is not None else None,
+            }
+        finally:
+            conn.close()
+
+    def _expected_order_state(self) -> dict[str, Any] | None:
+        binding = (self._active_call_context or {}).get("confirmation_binding")
+        if isinstance(binding, dict) and binding.get("entity") == "order":
+            row = binding.get("row")
+            if isinstance(row, dict):
+                return row
+        return None
+
+    def _expected_user_state(self) -> dict[str, Any] | None:
+        binding = (self._active_call_context or {}).get("confirmation_binding")
+        if isinstance(binding, dict) and binding.get("entity") == "user":
+            row = binding.get("row")
+            if isinstance(row, dict):
+                return row
+        return None
+
+    def _order_write_guard(self, where: str, params: tuple[Any, ...]) -> tuple[str, tuple[Any, ...]]:
+        expected = self._expected_order_state()
+        if expected is None:
+            return where, params
+        return (
+            f"{where} AND version=? AND status=?",
+            (*params, expected.get("version"), expected.get("status")),
+        )
+
+    def _stale_or_block(self, name: str, order_id: str, fallback: str, **extra: Any) -> dict[str, Any]:
+        expected = self._expected_order_state()
+        if expected is not None:
+            current = self._confirmation_state_binding({"order_id": order_id})
+            if current != {"entity": "order", "key": str(order_id), "row": expected}:
+                return self._block(name, "confirmation_stale", order_id=order_id, **extra)
+        return self._block(name, fallback, order_id=order_id, **extra)
+
+    def _stale_user_or_block(self, user_id: str, fallback: str) -> dict[str, Any]:
+        expected = self._expected_user_state()
+        if expected is not None:
+            current = self._confirmation_state_binding({"user_id": user_id})
+            if current != {"entity": "user", "key": str(user_id), "row": expected}:
+                return self._block("modify_user_address", "confirmation_stale", user_id=user_id)
+        return self._block("modify_user_address", fallback, user_id=user_id)
 
     def _require_trusted_confirmation(
         self, name: str, arguments: dict[str, Any], confirmed: bool
@@ -184,15 +253,29 @@ class RetailTools:
         if name not in (WRITE_TOOLS - {"escalate_to_human"}):
             return None
         context = self._active_call_context or {}
-        valid = bool(confirmed) and self.confirmation_ledger.validate_authorization(
+        state_binding = self._confirmation_state_binding(arguments)
+        record = self.confirmation_ledger.record_for_authorization(
             authorization_id=context.get("confirmation_id"),
             session_id=context.get("session_id"),
             user_id=arguments.get("user_id"),
             operation=name,
             parameters=arguments,
         )
+        valid = bool(confirmed) and self.confirmation_ledger.validate_authorization(
+            authorization_id=context.get("confirmation_id"),
+            session_id=context.get("session_id"),
+            user_id=arguments.get("user_id"),
+            operation=name,
+            parameters=arguments,
+            state_binding=state_binding,
+        )
         if valid:
+            context["confirmation_binding"] = record.state_binding if record is not None else None
             return None
+        if record is not None and record.state_binding_hash is not None:
+            current_hash = binding_hash(state_binding)
+            if current_hash not in {record.state_binding_hash, record.completed_state_binding_hash}:
+                return self._block(name, "confirmation_stale", order_id=arguments.get("order_id"))
         return self._block(name, "confirmation_required", order_id=arguments.get("order_id"))
 
     def _identity_guard(self, name: str, arguments: dict[str, Any]) -> dict | None:
@@ -241,6 +324,15 @@ class RetailTools:
                 "confirmation_id": _confirmation_id,
             }
             result = self._registry[name](**arguments)
+            if name in (WRITE_TOOLS - {"escalate_to_human"}) and result.get("ok"):
+                self.confirmation_ledger.mark_completed(
+                    authorization_id=_confirmation_id,
+                    session_id=_session_id,
+                    user_id=arguments.get("user_id"),
+                    operation=name,
+                    parameters=arguments,
+                    state_binding=self._confirmation_state_binding(arguments),
+                )
         except Exception as exc:
             error, result = str(exc), {"ok": False, "error": str(exc)}
         finally:
@@ -375,9 +467,17 @@ class RetailTools:
         request_id = self._return_request_id(order_id)
         conn = orders.connect(self.db_path)
         try:
-            cur = conn.execute(
-                "UPDATE orders SET return_status='requested', version=version+1 WHERE order_id=? AND return_status IS NULL",
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='delivered' AND return_status IS NULL",
                 (order_id,),
+            )
+            expected = self._expected_order_state()
+            if expected is not None:
+                where += " AND opened=? AND quality_issue=? AND delivered_at=?"
+                params += (expected.get("opened"), expected.get("quality_issue"), expected.get("delivered_at"))
+            cur = conn.execute(
+                f"UPDATE orders SET return_status='requested', version=version+1 {where}",
+                params,
             )
             conn.commit()
             if cur.rowcount == 1:
@@ -403,7 +503,7 @@ class RetailTools:
                     "order_id": order_id,
                     "return_status": "requested",
                 }
-            return self._block("create_return_request", "return_status_conflict", order_id=order_id)
+            return self._stale_or_block("create_return_request", order_id, "return_status_conflict")
         finally:
             conn.close()
 
@@ -441,14 +541,16 @@ class RetailTools:
             return self._block("cancel_pending_order", "order_not_pending", order_id=order_id, status=order["status"])
         conn = orders.connect(self.db_path)
         try:
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='pending'", (order_id,)
+            )
             cur = conn.execute(
-                "UPDATE orders SET status='cancelled', cancel_reason=?, version=version+1 "
-                "WHERE order_id=? AND status='pending'",
-                (reason, order_id),
+                f"UPDATE orders SET status='cancelled', cancel_reason=?, version=version+1 {where}",
+                (reason, *params),
             )
             conn.commit()
             if cur.rowcount != 1:
-                return self._block("cancel_pending_order", "order_not_pending", order_id=order_id)
+                return self._stale_or_block("cancel_pending_order", order_id, "order_not_pending")
             return {
                 "ok": True,
                 "changed": True,
@@ -502,13 +604,16 @@ class RetailTools:
             }
         conn = orders.connect(self.db_path)
         try:
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='pending'", (order_id,)
+            )
             cur = conn.execute(
-                "UPDATE orders SET shipping_address=?, version=version+1 WHERE order_id=? AND status='pending'",
-                (encoded, order_id),
+                f"UPDATE orders SET shipping_address=?, version=version+1 {where}",
+                (encoded, *params),
             )
             conn.commit()
             if cur.rowcount != 1:
-                return self._block("modify_pending_order_address", "order_not_pending", order_id=order_id)
+                return self._stale_or_block("modify_pending_order_address", order_id, "order_not_pending")
             return {
                 "ok": True,
                 "changed": True,
@@ -568,14 +673,17 @@ class RetailTools:
             }
         conn = orders.connect(self.db_path)
         try:
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='pending'", (order_id,)
+            )
             cur = conn.execute(
                 "UPDATE orders SET product_id=?, item_ids=?, payment_method_id=?, version=version+1 "
-                "WHERE order_id=? AND status='pending'",
-                (new_item_ids[0], encoded_items, payment_method_id, order_id),
+                + where,
+                (new_item_ids[0], encoded_items, payment_method_id, *params),
             )
             conn.commit()
             if cur.rowcount != 1:
-                return self._block("modify_pending_order_items", "order_not_pending", order_id=order_id)
+                return self._stale_or_block("modify_pending_order_items", order_id, "order_not_pending")
             return {
                 "ok": True,
                 "changed": True,
@@ -625,13 +733,16 @@ class RetailTools:
             }
         conn = orders.connect(self.db_path)
         try:
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='pending'", (order_id,)
+            )
             cur = conn.execute(
-                "UPDATE orders SET payment_method_id=?, version=version+1 WHERE order_id=? AND status='pending'",
-                (payment_method_id, order_id),
+                f"UPDATE orders SET payment_method_id=?, version=version+1 {where}",
+                (payment_method_id, *params),
             )
             conn.commit()
             if cur.rowcount != 1:
-                return self._block("modify_pending_order_payment", "order_not_pending", order_id=order_id)
+                return self._stale_or_block("modify_pending_order_payment", order_id, "order_not_pending")
             return {
                 "ok": True,
                 "changed": True,
@@ -679,8 +790,16 @@ class RetailTools:
             }
         conn = orders.connect(self.db_path)
         try:
-            conn.execute("UPDATE users SET address=? WHERE user_id=?", (encoded, user_id))
+            expected = self._expected_user_state()
+            where = "WHERE user_id=?"
+            params: tuple[Any, ...] = (user_id,)
+            if expected is not None:
+                where += " AND name=? AND address IS ? AND payment_methods IS ?"
+                params += (expected.get("name"), expected.get("address"), expected.get("payment_methods"))
+            cur = conn.execute(f"UPDATE users SET address=? {where}", (encoded, *params))
             conn.commit()
+            if cur.rowcount != 1:
+                return self._stale_user_or_block(user_id, "user_not_found")
             return {
                 "ok": True,
                 "changed": True,
@@ -727,10 +846,17 @@ class RetailTools:
         request_id = self._return_request_id(order_id)
         conn = orders.connect(self.db_path)
         try:
-            cur = conn.execute(
-                "UPDATE orders SET return_status='requested', version=version+1 "
+            where, params = self._order_write_guard(
                 "WHERE order_id=? AND status='delivered' AND return_status IS NULL",
                 (order_id,),
+            )
+            expected = self._expected_order_state()
+            if expected is not None:
+                where += " AND opened=? AND quality_issue=? AND delivered_at=?"
+                params += (expected.get("opened"), expected.get("quality_issue"), expected.get("delivered_at"))
+            cur = conn.execute(
+                f"UPDATE orders SET return_status='requested', version=version+1 {where}",
+                params,
             )
             conn.commit()
             if cur.rowcount == 1:
@@ -760,7 +886,7 @@ class RetailTools:
                     "item_ids": list(item_ids),
                     "payment_method_id": payment_method_id,
                 }
-            return self._block("return_delivered_order_items", "return_status_conflict", order_id=order_id)
+            return self._stale_or_block("return_delivered_order_items", order_id, "return_status_conflict")
         finally:
             conn.close()
 
@@ -819,15 +945,19 @@ class RetailTools:
         encoded_items = json.dumps(list(new_item_ids), ensure_ascii=False)
         conn = orders.connect(self.db_path)
         try:
+            where, params = self._order_write_guard(
+                "WHERE order_id=? AND status='delivered' AND exchange_status IS NULL",
+                (order_id,),
+            )
             cur = conn.execute(
                 "UPDATE orders SET product_id=?, item_ids=?, payment_method_id=?, "
                 "exchange_status='exchanged', version=version+1 "
-                "WHERE order_id=? AND status='delivered' AND exchange_status IS NULL",
-                (new_item_ids[0], encoded_items, payment_method_id, order_id),
+                + where,
+                (new_item_ids[0], encoded_items, payment_method_id, *params),
             )
             conn.commit()
             if cur.rowcount != 1:
-                return self._block("exchange_delivered_order_items", "exchange_already_completed", order_id=order_id)
+                return self._stale_or_block("exchange_delivered_order_items", order_id, "exchange_already_completed")
             return {
                 "ok": True,
                 "changed": True,
