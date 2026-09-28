@@ -34,6 +34,15 @@ selective tools、evidence-answer-v1、retrieval experience 都是隔离实验�
 恢复时先使用完整 tracked diff 和未跟踪源归档，再按各实验 manifest 的代码、任务、配置、
 评分版本和产物路径逐项重建。
 
+## 外部机制背景（非依赖）
+
+- Open Deep Research 的参考点是“工具结果回到状态，再决定是否继续研究”；本项目只
+  保留 history/evidence 循环和预算边界，没有移植其 LangGraph 或多 Agent runner。
+- Recuris 的参考点是 frozen agent、结构化轨迹和 paired validation gate；本项目只借鉴
+  可审计轨迹与 exploration/validation 分离，没有生成 Skill、自动 patch 策略或运行训练。
+
+这些参考用于解释实验设计，不是本仓库的外部调用者、运行时依赖或模型效果证据。
+
 ## 已提交的历史 manifest
 
 这些 JSON 是机器可读记录，内容和路径保持不变；下面的哈希用于区分同名重建文件。
