@@ -7,7 +7,7 @@ The scripts in this repository cover:
 
 - deterministic catalogue, retrieval-index, harness, and SFT-data preparation;
 - external Retail evaluation and process audits;
-- context-history measurement and trajectory export;
+- context-history measurement;
 - paired complex-consultation A/B wiring in `scripts/run_research_trial.py`;
 - the transaction-contract audit in `scripts/audit_transaction_contracts.py`.
 
