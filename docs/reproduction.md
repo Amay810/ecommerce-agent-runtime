@@ -27,6 +27,24 @@ observation、selective tools、evidence-answer-v1、retrieval experience 或
 ResearchState 提供“实验有效”的结论。历史结果继续按其原始 runtime/checkout/
 dirty diff 保存并单独标记。
 
+## 稳定入口与实验入口的默认边界
+
+- `ecommerce_rag.harness run` 默认使用 `oracle` policy；若显式选择 `native`，
+  `--research-state`、`--skill` 和 `--research-budget` 仍分别是关闭、空值和空值。
+  clean HEAD 没有 `--observation-view`、`--tool-visibility`、answer contract 或
+  retrieval-experience 参数，因此主 Harness 是 legacy observation、完整业务
+  schema、无新 answer contract、无 retrieval experience。
+- `NativeToolPolicy` 直接构造器的 `skill_enabled=False`、`research_context=False`，
+  没有 dirty worktree 新增的 observation/tool-selection/answer-contract/retrieval
+  参数；既有 `compact_context=True` 只表示 provider history compaction，受
+  `ERAG_CONTEXT_COMPACTION`（兼容 `ARAG_CONTEXT_COMPACTION`）控制，不等于未提交的
+  compact observation 投影。
+- `scripts/run_research_trial.py` 是实验入口，默认 `--arm all` 会显式运行 A/B，B
+  注入 `ResearchState`；这不是稳定主路径默认启用实验功能，也不应改成生产 CLI
+  的默认配置。要复现 legacy control，应显式使用 `--arm A`。
+- `scripts/run_skill_trial.py` 同样是实验入口，默认加载 Skill v0 并使用其声明的
+  return-closure scoring version；它的默认不代表 Harness/Native 主路径默认。
+
 以下命令默认在仓库根目录执行。本轮实现了本地复杂咨询补证 wiring、任务集和
 CPU 对照入口；不下载模型、不启动 GPU、
 不调用付费服务。`Executed` 表示已有明确命令和结果；`Historical` 表示复用
