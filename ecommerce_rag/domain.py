@@ -6,6 +6,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
+SCORING_VERSION_HARNESS_V1 = "harness-v1"
+SCORING_VERSION_HARNESS_V2_TERMINAL = "harness-v2-terminal"
+
+
 @dataclass(frozen=True)
 class CatalogRecord:
     record_id: str
@@ -38,7 +42,7 @@ class TaskSpec:
     expected_tool_sequence: list[str] = field(default_factory=list)
     # Versioned scoring contract.  The default preserves historical task/report
     # semantics; return-closure-v2 is opt-in for the new experiment set.
-    scoring_version: str = "harness-v1"
+    scoring_version: str = SCORING_VERSION_HARNESS_V1
     # Optional read-only research resource limit. It is not an answer hint.
     research_budget: int | None = None
     # Human/evaluator-facing contract kept on TaskSpec and never copied into
@@ -198,11 +202,13 @@ class GradeResult:
     raw_observed_tool_sequence: list[str] = field(default_factory=list)
     successful_tool_sequence: list[str] = field(default_factory=list)
     failed_or_empty_tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    scoring_version: str = "harness-v1"
+    scoring_version: str = SCORING_VERSION_HARNESS_V1
     required_facts_pass: bool = True
     confirmation_protocol_pass: bool = True
     unexpected_tool_attempt: bool = False
     interaction_protocol_failure: bool = False
+    final_answer_present: bool = False
+    terminal_completion: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

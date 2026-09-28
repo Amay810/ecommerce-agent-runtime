@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from ecommerce_rag.domain import TaskSpec
+from ecommerce_rag.domain import SCORING_VERSION_HARNESS_V2_TERMINAL, TaskSpec
 from ecommerce_rag.domain import AgentAction
 from ecommerce_rag.domain import AgentObservation
 from ecommerce_rag.harness import HarnessRunner, RulePolicy, _sequence_match, grade
@@ -24,6 +24,44 @@ def _eligible(db):
 
 
 class HarnessToolTests(unittest.TestCase):
+ def test_harness_v1_preserves_operational_success_without_final_answer(self):
+    task = TaskSpec("v1-terminal-compat", "lookup", "U0001", "查询", 1)
+    result = grade(task, Trajectory("tr-v1", task.task_id, 1))
+    self.assertTrue(result.success)
+    self.assertFalse(result.final_answer_present)
+    self.assertFalse(result.terminal_completion)
+    self.assertEqual(result.scoring_version, "harness-v1")
+
+ def test_harness_v2_terminal_requires_answer_or_handoff(self):
+    task = TaskSpec(
+        "v2-terminal", "lookup", "U0001", "查询", 1,
+        scoring_version=SCORING_VERSION_HARNESS_V2_TERMINAL,
+    )
+    incomplete = grade(task, Trajectory("tr-v2-incomplete", task.task_id, 1))
+    complete = grade(task, Trajectory("tr-v2-complete", task.task_id, 1, final_answer="已完成。"))
+    self.assertFalse(incomplete.success)
+    self.assertEqual(incomplete.failure_type, "incomplete-terminal")
+    self.assertFalse(incomplete.terminal_completion)
+    self.assertTrue(complete.success)
+    self.assertTrue(complete.final_answer_present)
+    self.assertTrue(complete.terminal_completion)
+    self.assertEqual(complete.scoring_version, SCORING_VERSION_HARNESS_V2_TERMINAL)
+
+ def test_harness_v2_terminal_accepts_successful_handoff_without_answer(self):
+    task = TaskSpec(
+        "v2-handoff", "lookup", "U0001", "转人工", 1,
+        metadata={"handoff_expected": True},
+        scoring_version=SCORING_VERSION_HARNESS_V2_TERMINAL,
+    )
+    trajectory = Trajectory(
+        "tr-v2-handoff", task.task_id, 1,
+        tool_calls=[ToolCall("escalate_to_human", {}, "handoff", {"ok": True}, "now")],
+    )
+    result = grade(task, trajectory)
+    self.assertTrue(result.success)
+    self.assertFalse(result.final_answer_present)
+    self.assertTrue(result.terminal_completion)
+
  def _return_v2_task(self, *, write=True):
     return TaskSpec(
         "return_v2", "return", "U0001", "退货", 1,

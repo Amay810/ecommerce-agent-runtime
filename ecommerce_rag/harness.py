@@ -14,7 +14,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
 
-from .domain import AgentAction, AgentObservation, GradeResult, TaskSpec, ToolCall, Trajectory
+from .domain import (
+    SCORING_VERSION_HARNESS_V2_TERMINAL,
+    AgentAction,
+    AgentObservation,
+    GradeResult,
+    TaskSpec,
+    ToolCall,
+    Trajectory,
+)
 from .confirmation import confirmation_decision
 from .evidence import convert_tool_call_to_evidence, verify_answer
 from .orders import connect, seed_database, snapshot
@@ -425,6 +433,7 @@ def _plain_text_protocol_failure(trajectory: Trajectory) -> bool:
 
 
 def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = False) -> GradeResult:
+    requires_terminal_completion = task.scoring_version == SCORING_VERSION_HARNESS_V2_TERMINAL
     names = [c.name for c in trajectory.tool_calls]
     if task.scoring_version == "return-closure-v2":
         expected, permitted, write_expected = _return_closure_v2_contract(task)
@@ -492,10 +501,13 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     state_diff = _nested_diff(task.expected_state, trajectory.final_state)
     state_ok = not state_diff
     handoff = any(c.name == "escalate_to_human" and c.result.get("ok") for c in trajectory.tool_calls)
+    final_answer_present = bool(str(trajectory.final_answer or "").strip())
+    terminal_completion = final_answer_present or handoff
     success = (state_ok and compliant and recall == 1.0 and handoff == handoff_expected
                and not required_tool_failure and required_facts_pass
                and confirmation_protocol_pass and not interaction_protocol_failure
-               and retrieval_gold_ok and sequence_match is not False)
+               and retrieval_gold_ok and sequence_match is not False
+               and (not requires_terminal_completion or terminal_completion))
     reward = (5.0 if success else 0.0) + (2.0 if compliant else 0.0) + (1.0 if retrieval_gold_ok else 0.0)
     reward -= 2.0 * len(observed - permitted - ({"escalate_to_human"} if handoff_expected else set()))
     if handoff != handoff_expected: reward -= 3.0
@@ -514,6 +526,8 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         unexpected_tool_attempt=unexpected_tool_attempt,
         interaction_protocol_failure=interaction_protocol_failure,
     )
+    if requires_terminal_completion and not terminal_completion and failure is None:
+        failure = "incomplete-terminal"
     abstention_expected = bool(task.metadata.get("abstention_expected"))
     abstention_observed = any(x in trajectory.final_answer.lower() for x in ("无法", "不能", "不符合", "转人工"))
     answer_grade = verify_answer(
@@ -561,6 +575,8 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         confirmation_protocol_pass=confirmation_protocol_pass,
         unexpected_tool_attempt=unexpected_tool_attempt,
         interaction_protocol_failure=interaction_protocol_failure,
+        final_answer_present=final_answer_present,
+        terminal_completion=terminal_completion,
     )
 
 
