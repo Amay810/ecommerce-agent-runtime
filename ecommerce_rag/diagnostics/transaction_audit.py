@@ -44,6 +44,8 @@ MONEY_QUANTUM = Decimal("0.01")
 MONEY_ROUNDING = ROUND_HALF_UP
 VOLATILE_STATE_FIELDS = frozenset({"handoff_id", "created_at"})
 JSON_STATE_COLUMNS = frozenset({"address", "payment_methods", "item_ids", "shipping_address"})
+BUSINESS_STATE_TABLES = {"users": "user_id", "orders": "order_id"}
+AUDIT_EVENT_TABLE = "handoffs"
 
 ORDER_SCOPED_TOOLS = frozenset(
     {
@@ -306,10 +308,16 @@ def _diff_values(expected: Any, actual: Any, path: str, output: dict[str, Any]) 
 
 
 def state_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
-    """Return compact field-level SQLite differences rather than whole dumps."""
+    """Return business-state diffs plus controlled handoff row-count changes.
+
+    User/order rows are the mutable business state for transaction contracts.
+    Handoff ids and timestamps are volatile audit fields; only the handoff row
+    count is retained so a handoff remains observable without making its
+    generated metadata look like a business mutation.
+    """
 
     output: dict[str, Any] = {}
-    for table, key in (("users", "user_id"), ("orders", "order_id")):
+    for table, key in BUSINESS_STATE_TABLES.items():
         old = {row.get(key): row for row in _rows(before, table)}
         new = {row.get(key): row for row in _rows(after, table)}
         for row_key in sorted(set(old) | set(new), key=str):
@@ -320,8 +328,8 @@ def state_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
                         "before": old_row.get(field_name),
                         "after": new_row.get(field_name),
                     }
-    old_handoffs = _rows(before, "handoffs")
-    new_handoffs = _rows(after, "handoffs")
+    old_handoffs = _rows(before, AUDIT_EVENT_TABLE)
+    new_handoffs = _rows(after, AUDIT_EVENT_TABLE)
     if old_handoffs != new_handoffs:
         output["handoffs.rows"] = {
             "before_count": len(old_handoffs),
@@ -370,9 +378,13 @@ class StepAudit:
     canonical_args: dict[str, Any]
     execution_path: str
     pre_state_hash: str
+    pre_dispatch_state_hash: str
     post_state_hash: str
     state_diff: dict[str, Any]
+    setup_state_diff: dict[str, Any]
+    dispatch_state_diff: dict[str, Any]
     observation: dict[str, Any]
+    observation_changed_matches_state: bool | None
     normalized_error: str | None
     invariant_checks: list[dict[str, Any]]
     attempted_violation: bool
@@ -731,6 +743,7 @@ class ReplayRunner:
         steps: list[StepAudit] = []
         for step_idx, action in enumerate(actions):
             before = database_state(self.db_path)
+            pre_dispatch = before
             try:
                 call_args = copy.deepcopy(action.args)
                 trusted_session = f"replay:{trajectory_id}"
@@ -768,6 +781,7 @@ class ReplayRunner:
                         conn.commit()
                     finally:
                         conn.close()
+                pre_dispatch = database_state(self.db_path)
                 result = runtime.call(
                     action.tool,
                     _session_id=trusted_session if trusted_confirmation else None,
@@ -776,13 +790,21 @@ class ReplayRunner:
                 )
             except Exception as exc:  # pragma: no cover - defensive adapter boundary
                 result = {"ok": False, "changed": False, "error": f"{type(exc).__name__}: {exc}"}
+                pre_dispatch = database_state(self.db_path)
             after = database_state(self.db_path)
-            checks = _precondition_violations(before, action, result)
-            checks.extend(_postcondition_violations(before, after, action, result))
+            setup_diff = state_diff(before, pre_dispatch)
+            dispatch_diff = state_diff(pre_dispatch, after)
+            checks = _precondition_violations(pre_dispatch, action, result)
+            checks.extend(_postcondition_violations(pre_dispatch, after, action, result))
             diff = state_diff(before, after)
             pre_violations = [check for check in checks if check["phase"] == "pre"]
             post_violations = [check for check in checks if check["phase"] == "post"]
-            committed = bool(post_violations or (pre_violations and (diff or result.get("changed"))))
+            committed = bool(post_violations or (pre_violations and dispatch_diff))
+            observation_changed_matches_state = (
+                None
+                if "changed" not in result
+                else bool(result.get("changed")) == bool(dispatch_diff)
+            )
             blocked = bool(pre_violations and not committed)
             steps.append(
                 StepAudit(
@@ -793,9 +815,13 @@ class ReplayRunner:
                     canonical_args=action.canonical_args(),
                     execution_path=self.execution_path,
                     pre_state_hash=state_hash(before),
+                    pre_dispatch_state_hash=state_hash(pre_dispatch),
                     post_state_hash=state_hash(after),
                     state_diff=diff,
+                    setup_state_diff=setup_diff,
+                    dispatch_state_diff=dispatch_diff,
                     observation=normalize_observation(result),
+                    observation_changed_matches_state=observation_changed_matches_state,
                     normalized_error=(str(result.get("error")) if result.get("error") is not None else None),
                     invariant_checks=checks,
                     attempted_violation=bool(pre_violations),
@@ -979,10 +1005,16 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                     if family == "stale_confirmation":
                         unresolved_confirmation["executions"] += 1
                         unresolved_confirmation["on_state_commits_without_binding"] += int(
-                            step_on.observation.get("changed") is True
+                            bool(step_on.dispatch_state_diff)
                         )
                         unresolved_confirmation["off_state_commits_without_binding"] += int(
-                            step_off.observation.get("changed") is True
+                            bool(step_off.dispatch_state_diff)
+                        )
+                        unresolved_confirmation["on_observation_changed_mismatches"] += int(
+                            step_on.observation_changed_matches_state is False
+                        )
+                        unresolved_confirmation["off_observation_changed_mismatches"] += int(
+                            step_off.observation_changed_matches_state is False
                         )
                     if family == "stale_confirmation":
                         execution_class = "unresolved_confirmation_binding_probe"

@@ -17,7 +17,8 @@ from ecommerce_rag.diagnostics.transaction_audit import (
     run_adversarial_suite,
     state_diff,
 )
-from ecommerce_rag.orders import seed_database
+from ecommerce_rag.orders import connect, seed_database
+from ecommerce_rag.tools import RetailTools
 
 
 def _account(db: Path, *, status: str = "pending") -> tuple[dict, str]:
@@ -45,6 +46,33 @@ def test_state_diff_is_field_level_and_json_columns_are_structured(tmp_path):
     after["tables"]["orders"]["rows"][0]["version"] = 1
     diff = state_diff(before, after)
     assert list(diff) == [f"orders.{order['order_id']}.version"]
+
+
+def test_state_diff_ignores_handoff_identity_and_timestamp_metadata(tmp_path):
+    db = tmp_path / "retail.db"
+    seed_database(db, users=4, orders=12)
+    conn = connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO handoffs VALUES(?,?,?,?,?)",
+            ("H-before", "U0001", None, "audit-only", "2026-01-01T00:00:00Z"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    before = database_state(db)
+    conn = connect(db)
+    try:
+        conn.execute(
+            "UPDATE handoffs SET handoff_id=?, created_at=? WHERE handoff_id=?",
+            ("H-after", "2026-01-02T00:00:00Z", "H-before"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert state_diff(before, database_state(db)) == {}
 
 
 def test_guarded_cross_user_mutation_is_blocked_without_state_change(tmp_path):
@@ -133,6 +161,47 @@ def test_adversarial_suite_is_deterministic_and_has_required_volume():
     assert report["known_unresolved_gap"]["status"] == "RESOLVED"
     assert report["known_unresolved_gap"]["on_state_commits_without_binding"] == 0
     assert report["known_unresolved_gap"]["off_state_commits_without_binding"] == 2
+
+
+def test_stale_audit_uses_sqlite_diff_when_observation_lies(monkeypatch):
+    original_call = RetailTools.call
+
+    def call_that_lies_about_a_business_write(self, name, *, _session_id=None,
+                                              _confirmation_id=None, **arguments):
+        if name == "cancel_pending_order" and _confirmation_id:
+            conn = connect(self.db_path)
+            try:
+                conn.execute(
+                    "UPDATE orders SET status='cancelled', cancel_reason=?, version=version+1 "
+                    "WHERE order_id=?",
+                    ("simulated_observation_lie", arguments["order_id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return {"ok": False, "changed": False, "error": "simulated_observation_lie"}
+        return original_call(
+            self,
+            name,
+            _session_id=_session_id,
+            _confirmation_id=_confirmation_id,
+            **arguments,
+        )
+
+    monkeypatch.setattr(RetailTools, "call", call_that_lies_about_a_business_write)
+    report = run_adversarial_suite(repetitions=1)
+
+    stale = report["known_unresolved_gap"]
+    stale_case = next(row for row in report["cases"] if row["family"] == "stale_confirmation")
+    assert stale["on_state_commits_without_binding"] == 1
+    assert stale_case["on"]["observation"]["changed"] is False
+    assert stale_case["on"]["observation_changed_matches_state"] is False
+    assert stale_case["on"]["setup_state_diff"]
+    assert stale_case["on"]["dispatch_state_diff"]
+    assert any(
+        field.endswith(".status") or field.endswith(".cancel_reason")
+        for field in stale_case["on"]["dispatch_state_diff"]
+    )
 
 
 def test_direct_mcp_differential_reports_each_surface_layer():
