@@ -53,7 +53,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "description": "Compare two or more products by id.",
         "parameters": {
             "type": "object",
-            "properties": {"product_ids": {"type": "array", "items": {"type": "string"}}},
+            "properties": {
+                "product_ids": {
+                    "type": "array", "items": {"type": "string"}, "minItems": 2,
+                },
+            },
             "required": ["product_ids"],
         },
     },
@@ -355,6 +359,10 @@ def validate_arguments(tool_name: str, arguments: dict[str, Any]) -> None:
             raise ToolArgumentError(
                 f"{tool_name}.{name}: {value!r} is not one of {', '.join(map(str, choices))}")
         if spec.get("type") == "array":
+            min_items = spec.get("minItems")
+            if min_items is not None and len(value) < min_items:
+                raise ToolArgumentError(
+                    f"{tool_name}.{name}: must contain at least {min_items} item(s)")
             item_type = (spec.get("items") or {}).get("type")
             bad = [x for x in value if item_type and not _type_ok(x, item_type)]
             if bad:

@@ -368,6 +368,12 @@ class RetailTools:
         return {"ok": True, "product": {k: first.get(k) for k in ("product_id", "title", "category", "price", "inventory", "doc_id")}, "evidence": [c.get("text", "") for c in chunks[:5]]}
 
     def compare_products(self, product_ids: list[str]) -> dict:
+        if len(product_ids) < 2:
+            return {
+                "ok": False,
+                "error": "at_least_two_products_required",
+                "products": [],
+            }
         products = [self.get_product(pid) for pid in product_ids]
         return {"ok": all(p["ok"] for p in products), "products": products}
 

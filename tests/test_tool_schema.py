@@ -169,6 +169,22 @@ class ValidateArgumentsTests(unittest.TestCase):
         with self.assertRaises(ToolArgumentError):
             validate_arguments("compare_products", {"product_ids": [1, 2]})
 
+    def test_compare_products_requires_at_least_two_ids(self):
+        for product_ids in ([], ["P00001"]):
+            with self.subTest(product_ids=product_ids), self.assertRaises(ToolArgumentError) as ctx:
+                validate_arguments("compare_products", {"product_ids": product_ids})
+            self.assertIn("at least 2", str(ctx.exception))
+
+    def test_compare_products_runtime_rejects_short_list(self):
+        tools = RetailTools(":memory:")
+        self.assertEqual(
+            tools.compare_products(["P00001"]),
+            {"ok": False, "error": "at_least_two_products_required", "products": []},
+        )
+        result = tools.call("compare_products", product_ids=["P00001"])
+        self.assertFalse(result["ok"])
+        self.assertIn("at least 2", result["error"])
+
     def test_unknown_tool_is_rejected(self):
         with self.assertRaises(ToolArgumentError):
             validate_arguments("drop_database", {})
