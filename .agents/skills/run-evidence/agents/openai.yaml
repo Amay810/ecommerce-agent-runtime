@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Evidence"
+  short_description: "Build a compact run evidence card"
+  default_prompt: "Use $run-evidence to record provenance for a handoff or new experiment."
