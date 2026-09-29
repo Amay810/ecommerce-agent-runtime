@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .domain import (
+    SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
     SCORING_VERSION_HARNESS_V2_TERMINAL,
     AgentAction,
     AgentObservation,
@@ -373,6 +374,36 @@ def _return_closure_v2_contract(task: TaskSpec) -> tuple[set[str], set[str], boo
     return required, permitted, bool(task.metadata.get("return_write_expected"))
 
 
+def _task_tool_contract(task: TaskSpec) -> tuple[set[str], set[str], bool]:
+    """Return required tools, permitted tools, and write expectation.
+
+    ``harness-v1`` intentionally keeps its historical overloaded semantics so
+    old reports remain attributable. New tool-contract tasks must declare the
+    required subset explicitly and may use any other allowed tool or equivalent
+    path without losing credit.
+    """
+    if task.scoring_version == "return-closure-v2":
+        return _return_closure_v2_contract(task)
+    if task.scoring_version == SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT:
+        permitted = set(task.allowed_tools)
+        required = set(task.required_tools)
+        missing_permission = required - permitted
+        if missing_permission:
+            names = ", ".join(sorted(missing_permission))
+            raise ValueError(f"required_tools must be allowed_tools entries: {names}")
+        return required, permitted, False
+    # Historical v1: preserve the old meaning for old tasks and reports.
+    expected = set(task.allowed_tools)
+    return expected, expected, False
+
+
+def _offered_tool_schemas(task: TaskSpec) -> list[dict[str, Any]]:
+    if task.scoring_version != SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT:
+        return TOOL_SCHEMAS
+    permitted = set(task.allowed_tools)
+    return [schema for schema in TOOL_SCHEMAS if schema["name"] in permitted]
+
+
 def _return_closure_facts_pass(trajectory: Trajectory) -> bool:
     policy_ok = any(
         call.name == "get_policy"
@@ -435,12 +466,7 @@ def _plain_text_protocol_failure(trajectory: Trajectory) -> bool:
 def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = False) -> GradeResult:
     requires_terminal_completion = task.scoring_version == SCORING_VERSION_HARNESS_V2_TERMINAL
     names = [c.name for c in trajectory.tool_calls]
-    if task.scoring_version == "return-closure-v2":
-        expected, permitted, write_expected = _return_closure_v2_contract(task)
-    else:
-        expected = set(task.allowed_tools)
-        permitted = expected
-        write_expected = False
+    expected, permitted, write_expected = _task_tool_contract(task)
     observed, forbidden = set(names), set(task.forbidden_tools)
     retrieved_docs: set[str] = set()
     for span in trajectory.retrievals:
@@ -470,7 +496,9 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     handoff_expected = bool(task.metadata.get("handoff_expected"))
     allowed_handoff = {"escalate_to_human"} if handoff_expected else set()
     unexpected_names = observed - permitted - allowed_handoff
-    unexpected_tool_attempt = bool(unexpected_names) if task.scoring_version == "return-closure-v2" else False
+    unexpected_tool_attempt = bool(unexpected_names) if task.scoring_version in {
+        "return-closure-v2", SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+    } else False
     confirmation_protocol_pass = _confirmation_protocol_pass(
         trajectory, write_expected=write_expected
     )
@@ -478,7 +506,9 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     illegal_change = any(
         c.result.get("changed") and (
             c.name in forbidden
-            or (task.scoring_version == "return-closure-v2" and c.name in unexpected_names)
+            or (task.scoring_version in {
+                "return-closure-v2", SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+            } and c.name in unexpected_names)
         )
         for c in trajectory.tool_calls
     )
@@ -691,9 +721,10 @@ class HarnessRunner:
                     session["task_progress"] = progress.to_dict()
             observation = AgentObservation(
                 history[-1].get("content", ""), session,
-                copy.deepcopy(history), copy.deepcopy(TOOL_SCHEMAS), step,
+                copy.deepcopy(history), copy.deepcopy(_offered_tool_schemas(task)), step,
                 evidence_ledger=policy_evidence,
                 research_state=policy_research_state,
+                output_requirements=copy.deepcopy(task.output_requirements),
             )
             observations.append(asdict(observation))
             action, _initial_format_retries, policy_trace = decide(

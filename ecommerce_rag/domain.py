@@ -7,6 +7,7 @@ from typing import Any
 
 
 SCORING_VERSION_HARNESS_V1 = "harness-v1"
+SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT = "harness-v2-tool-contract"
 SCORING_VERSION_HARNESS_V2_TERMINAL = "harness-v2-terminal"
 
 
@@ -30,7 +31,12 @@ class TaskSpec:
     user_goal: str
     seed: int
     gold_doc_ids: list[str] = field(default_factory=list)
+    # v1 historically overloaded allowed_tools as both permitted and required.
+    # New contracts keep those meanings separate: allowed_tools is the action
+    # space, while required_tools names only the successful calls required by
+    # the task contract.
     allowed_tools: list[str] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
     forbidden_tools: list[str] = field(default_factory=list)
     expected_state: dict[str, Any] = field(default_factory=dict)
     initial_state: dict[str, Any] = field(default_factory=dict)
@@ -48,6 +54,9 @@ class TaskSpec:
     # Human/evaluator-facing contract kept on TaskSpec and never copied into
     # AgentObservation or a provider prompt.
     evaluation_contract: dict[str, Any] = field(default_factory=dict)
+    # Public response-format requirements. Unlike evaluation_contract, these
+    # are intentionally provided to the Agent.
+    output_requirements: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -70,6 +79,8 @@ class AgentObservation:
     # Derived from history/evidence_ledger; this is not a second business-state
     # store and is empty for the legacy/baseline observation path.
     research_state: dict[str, Any] = field(default_factory=dict)
+    # Public, non-gold response requirements from TaskSpec.
+    output_requirements: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

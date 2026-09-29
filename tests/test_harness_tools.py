@@ -4,7 +4,11 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from ecommerce_rag.domain import SCORING_VERSION_HARNESS_V2_TERMINAL, TaskSpec
+from ecommerce_rag.domain import (
+    SCORING_VERSION_HARNESS_V2_TERMINAL,
+    SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+    TaskSpec,
+)
 from ecommerce_rag.domain import AgentAction
 from ecommerce_rag.domain import AgentObservation
 from ecommerce_rag.harness import HarnessRunner, RulePolicy, _sequence_match, grade
@@ -24,6 +28,60 @@ def _eligible(db):
 
 
 class HarnessToolTests(unittest.TestCase):
+ def test_tool_contract_separates_allowed_from_required_tools(self):
+    task = TaskSpec(
+        "tool-contract", "lookup", "U0001", "查询", 1,
+        allowed_tools=["get_policy", "get_order"],
+        required_tools=["get_policy"],
+        output_requirements={"citation_format": "[E#]"},
+        scoring_version=SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+    )
+    result = grade(task, Trajectory(
+        "tr-tool-contract", task.task_id, 1,
+        final_answer="已完成。", termination_reason="final_answer",
+        tool_calls=[ToolCall("get_policy", {}, "policy", {"ok": True}, "now")],
+    ))
+    self.assertTrue(result.success)
+    self.assertEqual(result.tool_recall, 1.0)
+    self.assertFalse(result.unexpected_tool_attempt)
+    self.assertEqual(result.scoring_version, SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT)
+
+ def test_tool_contract_rejects_a_tool_outside_allowed_set(self):
+    task = TaskSpec(
+        "tool-contract-boundary", "lookup", "U0001", "查询", 1,
+        allowed_tools=["get_policy"], required_tools=["get_policy"],
+        scoring_version=SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+    )
+    result = grade(task, Trajectory(
+        "tr-tool-contract-boundary", task.task_id, 1,
+        final_answer="已完成。", termination_reason="final_answer",
+        tool_calls=[
+            ToolCall("get_policy", {}, "policy", {"ok": True}, "now"),
+            ToolCall("get_order", {}, "order", {"ok": True}, "now"),
+        ],
+    ))
+    self.assertFalse(result.success)
+    self.assertTrue(result.unexpected_tool_attempt)
+    self.assertEqual(result.failure_type, "unexpected-tool-attempt")
+
+ def test_tool_contract_exposes_only_public_output_requirements_and_allowed_tools(self):
+    class CapturePolicy:
+     def act(self, observation):
+      self.observation = observation
+      return AgentAction.answer("已完成。")
+
+    policy = CapturePolicy()
+    task = TaskSpec(
+        "tool-contract-observation", "lookup", "U0001", "查询", 1,
+        allowed_tools=["get_policy"],
+        output_requirements={"citation_format": "[E#]", "cite_factual_claims": True},
+        scoring_version=SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        HarnessRunner(Path(directory) / "contract.sqlite", policy=policy).run(task)
+    self.assertEqual([schema["name"] for schema in policy.observation.tool_schemas], ["get_policy"])
+    self.assertEqual(policy.observation.output_requirements, task.output_requirements)
+
  def test_harness_v1_preserves_operational_success_without_final_answer(self):
     task = TaskSpec("v1-terminal-compat", "lookup", "U0001", "查询", 1)
     result = grade(task, Trajectory("tr-v1", task.task_id, 1))

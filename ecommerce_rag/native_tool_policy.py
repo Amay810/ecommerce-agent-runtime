@@ -33,7 +33,9 @@ tool results, refund completion, balances, or delivery guarantees.
 
 Use request_user_input when an order id, six-digit verification code, reason,
 clarification, or confirmation is missing. Use handoff_to_human when the request
-cannot be completed safely. Otherwise answer the user directly.
+cannot be completed safely. When answering with tool-derived facts, cite the
+supporting evidence in the declared ``[E#]`` format. Otherwise answer the user
+directly.
 """
 
 
@@ -160,6 +162,13 @@ def _history_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif role in {"user", "assistant", "system"}:
             messages.append({"role": role, "content": content})
     return messages
+
+
+def _output_requirements_message(requirements: dict[str, Any]) -> str:
+    return (
+        "Public task output requirements (follow these without inventing facts):\n"
+        + json.dumps(requirements, ensure_ascii=False, sort_keys=True)
+    )
 
 
 class NativeToolPolicy:
@@ -345,6 +354,11 @@ class NativeToolPolicy:
     def act(self, observation: AgentObservation) -> AgentAction:
         history_messages = _history_messages(observation.history)
         messages, stats = self.runtime.prepare_messages(history_messages, "")
+        if observation.output_requirements:
+            messages.insert(1, {
+                "role": "system",
+                "content": _output_requirements_message(observation.output_requirements),
+            })
         # ``history`` is the source of truth for message provenance.  The
         # harness sets ``current_message`` to the latest history entry for all
         # policy steps, including tool results.  Never infer provenance from

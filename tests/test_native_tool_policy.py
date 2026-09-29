@@ -75,6 +75,26 @@ def test_native_tool_call_injects_user_id_and_validates_arguments():
     assert attempt["raw_response"]["message"]["tool_calls"][0]["function"]["name"] == "get_order"
 
 
+def test_native_policy_receives_public_output_requirements():
+    observation = _observation()
+    observation = AgentObservation(
+        current_message=observation.current_message,
+        session=observation.session,
+        history=observation.history,
+        tool_schemas=observation.tool_schemas,
+        output_requirements={"citation_format": "[E#]", "cite_factual_claims": True},
+    )
+
+    def generate(messages, _tools):
+        requirement = next(message for message in messages if "citation_format" in message["content"])
+        assert requirement["role"] == "system"
+        assert "[E#]" in requirement["content"]
+        return NativeGeneration(content="已完成。", finish_reason="stop")
+
+    action = NativeToolPolicy(generate).act(observation)
+    assert action.action_type == "final_answer"
+
+
 def test_openai_generator_uses_native_tools_wire_format():
     generator = NativeToolPolicy._openai_generator("http://localhost:8123/v1", "test-key", "Qwen")
     with patch("urllib.request.urlopen", return_value=_Response()) as mocked:

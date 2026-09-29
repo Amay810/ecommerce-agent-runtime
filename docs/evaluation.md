@@ -8,6 +8,7 @@
 | 版本 | 定义 | 使用方式 |
 |---|---|---|
 | `harness-v1` | 历史 operational contract；不要求最终回答非空即可判 operational success | 保留为历史默认/可比基线 |
+| `harness-v2-tool-contract` | `allowed_tools` 是 Agent 的许可工具集合；只有 `required_tools` 中成功调用的工具计入必需调用。未声明序列时允许等价路径；公开 `output_requirements` 会提供给 Agent | 新任务/新报告使用；不与 v1 结果直接比较 |
 | `harness-v2-terminal` | 保留 v1 的 state/tool 检查，并要求显式 `termination_reason=final_answer` 或成功 handoff；空回答、max steps、budget exhausted、不可用 typed input 不算完成 | 仅显式启用，写入独立报告 |
 | `return-closure-v2` | 退货闭环历史合同，包含其自身 tool/answer 规则 | 只读取带该版本的旧任务和报告 |
 
