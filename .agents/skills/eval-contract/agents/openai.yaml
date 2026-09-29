@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evaluation Contract"
+  short_description: "Audit task and scoring contracts"
+  default_prompt: "Use $eval-contract to audit a changed task or scoring contract."

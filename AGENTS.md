@@ -86,6 +86,14 @@ access and the absence of a checked-in GitHub Actions workflow are recorded in
 - `requirements-retrieval.txt` for SentenceTransformers, jieba and FAISS;
 - `requirements-data.txt` for the Amazon dataset preparation script.
 
+## 按变更范围选择验证证据
+
+- 纯文档修改只检查受影响的链接、引用和 diff；历史测试必须标明来源，不能写成本轮重跑。
+- 任务定义或确定性评分修改先核对评测合同，再用相关冻结轨迹做 CPU 检查或重评分。
+- 相关代码修改运行受影响测试；触及共享 runtime 边界或影响范围不明时扩大到 CPU 回归。
+- 改变模型实际输入、工具接口或决策流程时，先完成确定性检查，再针对明确的比较问题安排 Native 对照。
+- 结论区分“本轮执行”“引用历史记录”和“尚未验证”；本轮修复或“当前测试通过”需有相关的当次验证，本机结果不自动证明 AutoDL 可运行。
+
 代表性的 CPU 流程是确定性的 `RulePolicy` wiring，不是真实模型运行：
 
 ```bash
