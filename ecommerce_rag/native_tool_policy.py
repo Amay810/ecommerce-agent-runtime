@@ -39,6 +39,27 @@ directly.
 """
 
 
+_PRE_WRITE_CONFIRMATION = (
+    "Never use a write tool as a probe. Read and bind the exact target order and item,\n"
+    "then obtain explicit user confirmation before a write."
+)
+_RUNTIME_APPROVED_WRITE = (
+    "Never use a write tool as a probe. Read and bind the exact target order and item,\n"
+    "then call the write tool with the exact arguments; the system shows the user a\n"
+    "summary of that call and executes it only after the user approves. Do not ask for\n"
+    "confirmation in plain text."
+)
+
+
+def native_system_prompt(*, runtime_write_approval: bool = False) -> str:
+    """The Native instruction; the approval variant matches --runtime-write-approval."""
+    if not runtime_write_approval:
+        return NATIVE_SYSTEM_PROMPT
+    return (NATIVE_SYSTEM_PROMPT
+            .replace(_PRE_WRITE_CONFIRMATION, _RUNTIME_APPROVED_WRITE)
+            .replace("clarification, or confirmation is missing", "or clarification is missing"))
+
+
 CONTROL_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -186,6 +207,7 @@ class NativeToolPolicy:
         skill_path: str | os.PathLike[str] | None = None,
         skill_enabled: bool = False,
         research_context: bool = False,
+        runtime_write_approval: bool = False,
     ):
         self.generate = generate
         self.max_parse_retries = max_parse_retries
@@ -203,10 +225,10 @@ class NativeToolPolicy:
         self.runtime = AgentRuntime(
             RuntimeConfig(
                 runtime_version="system-v1",
-                prompt_version="ecommerce-native-v1",
+                prompt_version="ecommerce-native-v1-runtime-approval" if runtime_write_approval else "ecommerce-native-v1",
                 compact_context=compact_context,
                 max_generation_retries=max_parse_retries,
-                instruction=NATIVE_SYSTEM_PROMPT,
+                instruction=native_system_prompt(runtime_write_approval=runtime_write_approval),
                 skill_id=self.skill.skill_id if self.skill else None,
                 skill_version=self.skill.version if self.skill else None,
                 skill_content_hash=self.skill.content_hash if self.skill else None,
@@ -221,6 +243,7 @@ class NativeToolPolicy:
         skill_path: str | os.PathLike[str] | None = None,
         skill_enabled: bool = False,
         research_context: bool = False,
+        runtime_write_approval: bool = False,
     ) -> "NativeToolPolicy":
         base_url = os.getenv("ARAG_LLM_BASE_URL", os.getenv("ERAG_LLM_BASE_URL", "")).strip()
         if not base_url:
@@ -241,6 +264,7 @@ class NativeToolPolicy:
             skill_path=skill_path,
             skill_enabled=skill_enabled,
             research_context=research_context,
+            runtime_write_approval=runtime_write_approval,
         )
 
     @staticmethod

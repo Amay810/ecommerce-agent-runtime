@@ -149,3 +149,17 @@ def test_runtime_approval_is_disclosed_to_the_policy_only_when_enabled(pending):
     assert "write_confirmation" not in plain.observations[0]["output_requirements"]
     shown, _ = HarnessRunner(db, None, OraclePolicy(), runtime_write_approval=True).run(_task(order, target="P04997"))
     assert shown.observations[0]["output_requirements"]["write_confirmation"] == RUNTIME_WRITE_APPROVAL_NOTE
+
+
+def test_native_prompt_switches_to_runtime_approval_only_when_enabled():
+    from ecommerce_rag.native_tool_policy import NATIVE_SYSTEM_PROMPT, NativeToolPolicy, native_system_prompt
+
+    assert native_system_prompt() == NATIVE_SYSTEM_PROMPT
+    approved = native_system_prompt(runtime_write_approval=True)
+    assert "obtain explicit user confirmation before a write" not in approved
+    assert "executes it only after the user approves" in approved
+    stable = NativeToolPolicy(lambda messages, tools: None)
+    gated = NativeToolPolicy(lambda messages, tools: None, runtime_write_approval=True)
+    assert stable.runtime.config.instruction == NATIVE_SYSTEM_PROMPT
+    assert gated.runtime.config.instruction == approved
+    assert gated.runtime.config.prompt_version == "ecommerce-native-v1-runtime-approval"

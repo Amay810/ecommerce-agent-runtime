@@ -1203,7 +1203,8 @@ def main() -> None:
     if args.policy == "native":
         from .native_tool_policy import NativeToolPolicy
         policy: AgentPolicy = NativeToolPolicy.from_env(
-            skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state)
+            skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state,
+            runtime_write_approval=args.runtime_write_approval)
     elif args.policy == "retrieval_top1":
         from .research_find import RetrievalTop1Policy
         policy = RetrievalTop1Policy()
