@@ -45,7 +45,9 @@
   （CI [+10, +30]）；locked 一次性评估 40% → 48%（CI [−2, +19]，未显著），有答案题
   显著提升而无解题拒答下降。两个开关保持默认关闭。`2279390` 增加失败驱动的第二轮
   任务（`research_find_r2.jsonl`）：新 locked 98 题未运行；变体复现驱动失败的比例只有
-  29%，详见 [research_find](research_find.md)。
+  29%。第三轮改为模型在环挖掘；`670652c` 增加默认关闭的 `--search-result-attributes`
+  并修复其被上下文压缩丢弃的问题。r2 locked 一次性评估：34/98 → 49/98（溯源+融合）
+  → 58/98（加属性视图），无解题仍低于开关全关。详见 [research_find](research_find.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。

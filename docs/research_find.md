@@ -90,7 +90,9 @@ A 的失败：`false-abstention` 49、`never-retrieved` 7、`answered-unsatisfia
 
 - `--ground-search-filters`（`ecommerce_rag/argument_grounding.py`）：用户消息里没有
   出现的 `max_price` 数值或 `category` 文本不应用，并在工具结果写入
-  `argument_grounding.ignored_arguments`；轨迹同时保留模型请求的原始参数；
+  `argument_grounding.ignored_arguments`；轨迹同时保留模型请求的原始参数。**更正**：
+  Native 默认的上下文压缩（`context_compaction.compact_tool_result`）会丢弃这条说明，
+  模型从未看到它；本节的效果只来自不应用编造的过滤参数；
 - `--search-query-fusion`（`ecommerce_rag/query_fusion.py`）：每次搜索另用最近一条
   用户消息检索，按 RRF 融合父文档排名；两段文本相同时直接透传。
 
@@ -183,3 +185,71 @@ sha256 `cbad5858…`），只用 exploration 的 43 个失败生成新任务；l
   最终配置）：multi_constraint 60 → 25，near_sku 64 → 61，no_answer 80 → 70，
   typo_alias 24 → 53。"题型 + 约束结构"不是失败的主要成因，下一轮应改为按失败机制
   定向，或先生成候选、用当前系统筛出失败样本再作为 exploration。
+
+## Step 5：模型在环的难例挖掘（第三轮 exploration）
+
+按结构定向的复现率只有 29%，改为先生成候选、用当前系统筛出失败样本（代码
+`417e887`）：
+
+- `--mine-candidates`：不定向的 exploration 候选，排除 v1/r2 用过的所有商品，并预留
+  当前留出集（r2 locked）的全部（末级类目, 品牌）分组。110 题：multi_constraint 50、
+  no_answer 50、near_sku 6、typo_alias 4。品牌+兄弟款结构在 5k 目录中基本已被前两轮
+  用完，扩大这类题需要更大的语料（会改变全部既有结果的环境，本轮不做）。
+- `scripts/mine_research_find_hard_cases.py`：保留当前系统失败的全部候选，并按种子
+  抽 25% 成功候选作校准。最终配置（溯源+融合）在候选上 57/110 成功（报告 sha256
+  `7099142a…`）；失败 53：`false-abstention` 24、`answered-unsatisfiable` 20、
+  `never-retrieved` 7、`retrieved-not-selected` 2。输出
+  `ecommerce_rag/data/research_find_r3.jsonl`（68 题 = 53 失败 + 15 校准，sha256
+  `2b4ced3e…`）。它的成功率按构造有选择偏差，只用于诊断。
+
+失败分析（在 AutoDL 上直接读轨迹）：`answered-unsatisfiable` 20 题中 19 题答的是只差
+一个条件的近似商品，14 题已调用 `get_product` 查看该商品，但被换掉的属性不在模型
+可见范围内；`false-abstention` 24 题中 gold 从未被 `get_product` 查看，模型回答多为
+"列出的产品未提供材质信息，无法确认"。两类都指向属性不可见。
+
+## Step 6：属性视图与 r2 locked 一次性评估
+
+`--search-result-attributes`（`8c1b9a7`，默认关闭）：`search_catalog` 每个商品附带
+面向购物者的属性（排除尺寸、重量、排名、上架日期等，最多 12 个），`get_product`
+附带完整属性字典，均从索引里的商品卡片解析。`670652c` 修复了一个缺陷：Native 上下文
+压缩会丢弃 `attributes`，使该视图到不了模型；修复后没有 `attributes` 的结果压缩方式
+不变。`research-find-v1` 诊断新增 `abstention_phrase_with_product_id`（不改变评分）。
+
+exploration（`670652c`，最终配置对比溯源+融合；产物在
+`/root/autodl-tmp/experiments/research_find_step2_670652c/`）：
+
+| 集合 | 溯源+融合 → +属性视图 | 配对 CI | 属性视图报告 sha256 前缀 |
+|---|---|---|---|
+| v1 exploration 100 | 57% → 57% | [−8, +8] | `04eee7b1` |
+| r2 exploration 76 | 51.3% → 63.2% | [+2.6, +22.4] | `6fc87de6` |
+| r3 难例 68（选择偏差，仅诊断） | 25.0% → 36.8% | [−1.5, +25] | `9ddcb649` |
+
+有答案题一致改善（multi_constraint：v1 60→68、r2 25→56、r3 20→46），无解题没有
+改善（v1 80→60、r2 70→60、r3 36→32）："属性可见就能少误答近似商品"的假设在
+exploration 上没有得到支持。看到属性后，模型更常回答"没有完全符合的，最接近的是
+Pxxx"，按公开规则仍判失败（带拒答措辞同时出现编号：v1 5、r2 4、r3 8）。
+
+**r2 locked 一次性评估**（98 题，代码 `670652c`，四组各一次；
+`/root/autodl-tmp/experiments/research_find_r2_locked_670652c/`）。运行中实例因欠费
+关机：R、开关全关、溯源+融合三组已完整写出（溯源+融合的 98 条轨迹在恢复后核对完整），
+属性视图组在恢复后补跑；之前没有查看任何一组的逐题结果，未做调整。
+
+| 配置 | 全部 | 有答案 73 | 无解 25 | 产物 sha256 前缀（json / sqlite） |
+|---|---|---|---|---|
+| R：`retrieval_top1` | 30/98 | 30 | 0 | `c9fa3ee5` / `f1355a27` |
+| A，开关全关 | 34/98 | 15 | 19 | `56840637` / `de72566d` |
+| A + 溯源 + 融合 | 49/98 | 36 | 13 | `994e3877` / `5d1c7cab` |
+| A + 溯源 + 融合 + 属性视图 | 58/98 | 42 | 16 | `91ef2534` / `859cae68` |
+
+| 比较（按题 bootstrap 95% CI） | 全部 | 有答案 | 无解 |
+|---|---|---|---|
+| 开关全关 → 溯源+融合 | +15.3pp [+5.1, +25.5] | +28.8 [+17.8, +39.7] | −24 [−40, −8] |
+| 溯源+融合 → +属性视图 | +9.2pp [+1.0, +18.4] | +8.2 [0, +16.4] | +12 [−12, +36] |
+| 开关全关 → 三项全开 | +24.5pp [+13.3, +35.7] | +37.0 [+24.7, +49.3] | −12 [−28, +4] |
+| R → 三项全开 | +28.6pp [+17.4, +39.8] | +16.4 [+4.1, +28.8] | +64 [+44, +80] |
+
+结论：在全新留出集上，溯源+融合的提升达到显著并复现了 v1 locked 上无解题变差的
+现象；属性视图在其基础上再显著提高 9.2pp。三项全开相对开关全关 +24.5pp，但无解题
+仍低于开关全关（16 vs 19，未显著），转人工增至 4 次（任务只开放三个只读工具，计为
+不合规）。三个开关仍默认关闭；r2 locked 已使用。
+
