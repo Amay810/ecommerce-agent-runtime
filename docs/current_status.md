@@ -43,7 +43,9 @@
   未显著；主要失败是模型改写查询后召回下降并误拒答。`db3374c` 增加默认关闭的
   `--ground-search-filters`、`--search-query-fusion`，exploration 上 37% → 57%
   （CI [+10, +30]）；locked 一次性评估 40% → 48%（CI [−2, +19]，未显著），有答案题
-  显著提升而无解题拒答下降。两个开关保持默认关闭，详见 [research_find](research_find.md)。
+  显著提升而无解题拒答下降。两个开关保持默认关闭。`2279390` 增加失败驱动的第二轮
+  任务（`research_find_r2.jsonl`）：新 locked 98 题未运行；变体复现驱动失败的比例只有
+  29%，详见 [research_find](research_find.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。

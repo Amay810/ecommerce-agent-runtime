@@ -149,3 +149,37 @@ no_answer 80 → 60；有答案题的 gold 检索率 30.7% → 58.7%。最终配
 被近似商品误答；总体提升未达到显著。exploration 的 +20pp 在 locked 上缩小为 +8pp。
 两个开关保持默认关闭。本 locked 已经使用，后续改动需要用生成器换种子重新生成
 留出集再评估。
+
+## Step 4：失败驱动的第二轮任务（闭环第 ⑤ 环）
+
+`scripts/generate_research_find_tasks.py --evolve-from-report`（代码 `2279390`）读取
+exploration 上最终配置的报告（AutoDL
+`/root/autodl-tmp/experiments/research_find_v1_20261005/db3374c_native_exploration_grounding_fusion.json`，
+sha256 `cbad5858…`），只用 exploration 的 43 个失败生成新任务；locked 结果不参与。
+输出 `ecommerce_rag/data/research_find_r2.jsonl`（174 题，sha256 见 manifest），v1 生成结果
+逐字节不变。
+
+- **失败驱动 exploration（76 题）**：每个失败按"题型 + 约束结构"（如
+  `near_sku | attribute:Color+brand`）在未用过的商品上生成 2 个变体；请求 86 题，10 题因
+  结构稀有没有可用商品（manifest 的 `shortfall`）；每题记录 `driven_by`。
+- **新 locked（98 题）**：不定向，换种子；排除所有用过的商品，以及 v1/r2 exploration
+  出现过的全部（末级类目, 品牌）分组；按剩余配额分配题型。typo_alias 只有 23 题，
+  其余三类各 25 题：在这些排除规则下合格商品已经用完，没有为凑数放宽隔离。
+  **尚未运行。**
+
+第二轮 exploration 结果（AutoDL，`2279390`，同一索引和服务；产物在
+`/root/autodl-tmp/experiments/research_find_r2_20261005/`）：
+
+| 配置（r2 exploration 76） | 成功率 | 产物 sha256 前缀 |
+|---|---|---|
+| R：`retrieval_top1` | 28.9% | `d11018e4` |
+| A，开关全关 | 32.9% | `9a303bd6`（json）/ `af28a88b`（sqlite） |
+| A + 溯源 + 融合 | 51.3% | `2b76ad63` / `a2df23d1` |
+
+- 开关全关 → 全开：+18.4pp，CI [+6.6, +30.3]，变好 19 / 变差 5。这批题生成于开关设计
+  之后，是对开关效果在新题上的复现，但仍属 exploration，不是留出评估。
+- **定向效果有限**：同一最终配置下，变体失败 37/76（49%），其中只有 22/76（29%）复现
+  了驱动它的失败类型；整体 51.3%，略低于 v1 exploration 的 57%。分题型（v1 → r2，
+  最终配置）：multi_constraint 60 → 25，near_sku 64 → 61，no_answer 80 → 70，
+  typo_alias 24 → 53。"题型 + 约束结构"不是失败的主要成因，下一轮应改为按失败机制
+  定向，或先生成候选、用当前系统筛出失败样本再作为 exploration。
