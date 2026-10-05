@@ -80,4 +80,42 @@ A 的失败：`false-abstention` 49、`never-retrieved` 7、`answered-unsatisfia
 `category`/`max_price` 22，用用户原话 44。115 次搜索中 64 次带了请求没有提到的
 `max_price`，87 次带了 `category`；`search_catalog` 的 `max_price` 会丢弃无价格商品
 （约占目录 52%）。结论：主要损失来自模型改写后的查询文本本身，编造的过滤参数是次要
-原因；locked 尚未运行，本轮没有做任何改进。
+原因。
+
+## Step 2：两个检索运行时开关（exploration）
+
+代码 `db3374c23a620306c42c183688074a3236e372c5`（解压到
+`/root/autodl-tmp/src/ecommerce-agent-runtime-db3374c`，`git get-tar-commit-id` 校验；
+`index_5k` 软链接到上面同一份索引），环境与 Step 1 相同。两个开关默认关闭：
+
+- `--ground-search-filters`（`ecommerce_rag/argument_grounding.py`）：用户消息里没有
+  出现的 `max_price` 数值或 `category` 文本不应用，并在工具结果写入
+  `argument_grounding.ignored_arguments`；轨迹同时保留模型请求的原始参数；
+- `--search-query-fusion`（`ecommerce_rag/query_fusion.py`）：每次搜索另用最近一条
+  用户消息检索，按 RRF 融合父文档排名；两段文本相同时直接透传。
+
+| 配置（exploration 100） | 成功率 | 产物 sha256 前缀 |
+|---|---|---|
+| A，开关全关（`db3374c` 重跑） | 37% | `ad2b5318`（json）/ `8e854462`（sqlite） |
+| A + 过滤参数溯源 | 43% | `18ec2398` / `3599200e` |
+| A + 过滤参数溯源 + 查询融合 | 57% | `cbad5858` / `ca7bc324` |
+| R + 两个开关 | 30% | `9f7bf199` |
+
+配对（按题 bootstrap 95% CI）：
+
+| 比较 | 差值 | CI | 变好 / 变差 |
+|---|---|---|---|
+| A 关（`a380b90`）→ A 关（`db3374c`） | +1pp | [0, +3] | 1 / 0 |
+| A 关 → + 溯源 | +6pp | [−1, +14] | 11 / 5 |
+| + 溯源 → + 溯源 + 融合 | +14pp | [+5, +23] | 18 / 4 |
+| A 关 → + 溯源 + 融合 | +20pp | [+10, +30] | 25 / 5 |
+| R → A + 溯源 + 融合 | +27pp | [+17, +38] | 32 / 5 |
+| R → R + 两个开关 | 0 | [0, 0] | 0 / 0 |
+
+同配置重跑只差 1 题。分题型（关 → 溯源 → 溯源+融合）：multi_constraint 44/52/60，
+near_sku 28/32/64，no_answer 72/68/80，typo_alias 4/20/24。最终配置的剩余失败：
+`false-abstention` 32（typo_alias 占 18），`answered-unsatisfiable` 5，
+`never-retrieved` 3，`retrieved-not-selected` 2，`multiple-products-answered` 1。
+
+这些改动是看过 exploration 失败后设计的，exploration 上的提升偏乐观；是否成立以
+locked 为准，locked 尚未运行。

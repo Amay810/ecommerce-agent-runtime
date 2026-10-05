@@ -40,8 +40,9 @@
   不提供模型收益结论。
 - `research-find-v1`（`a380b90`，AutoDL）：200 题答案级找商品任务；确定性检索基线
   25.5%，Native Qwen3-4B 在 exploration 上 36%，与基线配对 +6pp（CI [−7, +19]），
-  未显著；主要失败是模型改写查询后召回下降并误拒答。locked 未运行，详见
-  [research_find](research_find.md)。
+  未显著；主要失败是模型改写查询后召回下降并误拒答。`db3374c` 增加默认关闭的
+  `--ground-search-filters`、`--search-query-fusion`，exploration 上 37% → 57%
+  （CI [+10, +30]）。locked 未运行，详见 [research_find](research_find.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。

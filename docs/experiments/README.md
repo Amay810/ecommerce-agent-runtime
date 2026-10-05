@@ -40,7 +40,9 @@ selective tools、evidence-answer-v1、retrieval experience 都是隔离实验�
 代码 `a380b90`（反事实分析 `c47247c`），AutoDL RTX 4090，产物在
 `/root/autodl-tmp/experiments/research_find_v1_20261005/`。Oracle 200/200 为接线检查；
 确定性检索基线 25.5%；Native Qwen3-4B exploration 36%，配对 +6pp（CI [−7, +19]）。
-产物哈希、执行类别和失败归因见 [research_find](../research_find.md)。locked 未运行。
+Step 2（`db3374c`，开关默认关闭）：过滤参数溯源 43%，再加查询融合 57%，相对开关全关
++20pp（CI [+10, +30]）；同配置重跑只差 1 题。产物哈希、执行类别和失败归因见
+[research_find](../research_find.md)。locked 未运行。
 
 ## 外部机制背景（非依赖）
 
