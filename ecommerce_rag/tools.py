@@ -100,10 +100,37 @@ def _address_payload(
     }
 
 
+# Catalog fields that describe logistics or listing metadata rather than what a
+# shopper asks for; they are left out of attribute views in search results.
+NON_SHOPPER_ATTRIBUTES = frozenset({
+    "Product Dimensions", "Package Dimensions", "Item Dimensions LxWxH", "Item Dimensions  LxWxH",
+    "Item Weight", "Item model number", "Date First Available", "Best Sellers Rank",
+    "Is Discontinued By Manufacturer", "zh_aliases",
+})
+SEARCH_ATTRIBUTE_LIMIT = 12
+ATTRIBUTE_VALUE_LIMIT = 80
+
+
+def parse_card_attributes(card: str) -> dict[str, str]:
+    """Read the ``规格：key: value；...`` line of a product card built by the index."""
+    for line in (card or "").splitlines():
+        if line.startswith("规格："):
+            attributes = {}
+            for part in line[len("规格："):].split("；"):
+                key, sep, value = part.partition(": ")
+                if sep and key.strip():
+                    attributes[key.strip()] = value.strip()
+            return attributes
+    return {}
+
+
 class RetailTools:
     def __init__(self, db_path: Path | str, retriever: Any | None = None, today: date | None = None):
         self.db_path = Path(db_path)
         self.retriever = retriever
+        # Opt-in observation change: show product attributes in search results
+        # and get_product. Off on the stable path.
+        self.expose_attributes = False
         configured_today = os.getenv("ERAG_SIMULATED_TODAY", "2026-07-20")
         self.today = today or date.fromisoformat(configured_today)
         self.confirmation_ledger = ConfirmationLedger()
@@ -350,10 +377,19 @@ class RetailTools:
             if not pid or pid in seen or (max_price is not None and (chunk.get("price") or float("inf")) > max_price):
                 continue
             seen.add(pid)
-            items.append({k: chunk.get(k) for k in ("product_id", "title", "category", "price", "inventory", "doc_id", "score")})
+            item = {k: chunk.get(k) for k in ("product_id", "title", "category", "price", "inventory", "doc_id", "score")}
+            if self.expose_attributes:
+                shopper = {k: v[:ATTRIBUTE_VALUE_LIMIT] for k, v in self._product_attributes(pid).items()
+                           if k not in NON_SHOPPER_ATTRIBUTES}
+                item["attributes"] = dict(list(shopper.items())[:SEARCH_ATTRIBUTE_LIMIT])
+            items.append(item)
             if len(items) == top_k:
                 break
         return {"ok": True, "items": items}
+
+    def _product_attributes(self, product_id: str) -> dict[str, str]:
+        parents = getattr(self.retriever, "parents", None) or {}
+        return parse_card_attributes(parents.get(f"product:{product_id}", ""))
 
     def _product_chunks(self, product_id: str) -> list[dict]:
         if self.retriever is None:
@@ -365,7 +401,10 @@ class RetailTools:
         if not chunks:
             return {"ok": False, "error": "product_not_found"}
         first = chunks[0]
-        return {"ok": True, "product": {k: first.get(k) for k in ("product_id", "title", "category", "price", "inventory", "doc_id")}, "evidence": [c.get("text", "") for c in chunks[:5]]}
+        result = {"ok": True, "product": {k: first.get(k) for k in ("product_id", "title", "category", "price", "inventory", "doc_id")}, "evidence": [c.get("text", "") for c in chunks[:5]]}
+        if self.expose_attributes:
+            result["attributes"] = self._product_attributes(product_id)
+        return result
 
     def compare_products(self, product_ids: list[str]) -> dict:
         if len(product_ids) < 2:

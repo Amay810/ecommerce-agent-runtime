@@ -31,6 +31,10 @@ class ContextFusionRetriever:
     def chunks(self) -> list[dict[str, Any]]:
         return self.retriever.chunks
 
+    @property
+    def parents(self) -> dict[str, str]:
+        return getattr(self.retriever, "parents", {})
+
     def search(self, query: str, top_k: int = 5, source_type: str | None = None,
                category: str | None = None) -> list[dict[str, Any]]:
         primary = self.retriever.search(query, top_k=top_k, source_type=source_type, category=category)

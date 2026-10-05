@@ -114,3 +114,53 @@ def test_top1_baseline_is_unchanged_by_query_fusion(db):
     fused, _ = HarnessRunner(db, retriever, RetrievalTop1Policy(), search_query_fusion=True).run(_task())
     assert plain.tool_calls[0].result["items"] == fused.tool_calls[0].result["items"]
     assert fused.tool_calls[0].result["query_fusion"] == {"context_fused": False}
+
+
+def test_card_attributes_are_parsed_from_the_spec_line():
+    from ecommerce_rag.tools import parse_card_attributes
+
+    card = "商品：Acme Earbuds（Electronics）\n规格：Brand: Acme；Color: Blue；Best Sellers Rank: {'Earbuds': 3}\n描述：x"
+    assert parse_card_attributes(card) == {"Brand": "Acme", "Color": "Blue", "Best Sellers Rank": "{'Earbuds': 3}"}
+    assert parse_card_attributes("商品：无规格") == {}
+
+
+class CardRetriever(ListRetriever):
+    def __init__(self, rankings):
+        super().__init__(rankings)
+        self.parents = {
+            "product:P00002": "商品：P00002\n规格：Brand: Acme；Color: Red；Item Weight: 3 ounces",
+            "product:P00001": "商品：P00001\n规格：Brand: Acme；Color: Blue",
+        }
+
+
+class SearchThenInspect:
+    privileged = False
+
+    def act(self, observation):
+        called = [row.get("name") for row in observation.history if row.get("role") == "tool"]
+        if not called:
+            return AgentAction.tool_call("search_catalog", query="short")
+        if "get_product" not in called:
+            return AgentAction.tool_call("get_product", product_id="P00002")
+        return AgentAction.answer("没有符合条件的商品。")
+
+
+def test_attribute_view_is_opt_in_and_hides_listing_metadata(db):
+    retriever = CardRetriever({"short": ["P00002", "P00001"]})
+    stable, _ = HarnessRunner(db, retriever, SearchThenInspect()).run(_task())
+    assert "attributes" not in stable.tool_calls[0].result["items"][0]
+    assert "attributes" not in stable.tool_calls[1].result
+
+    shown, _ = HarnessRunner(db, retriever, SearchThenInspect(), search_result_attributes=True).run(_task())
+    items = shown.tool_calls[0].result["items"]
+    assert items[0]["attributes"] == {"Brand": "Acme", "Color": "Red"}
+    assert items[1]["attributes"] == {"Brand": "Acme", "Color": "Blue"}
+    assert shown.tool_calls[1].result["attributes"] == {"Brand": "Acme", "Color": "Red", "Item Weight": "3 ounces"}
+
+
+def test_attribute_view_reaches_through_the_fusion_wrapper(db):
+    retriever = CardRetriever({"short": ["P00002"], "full user request": ["P00001"]})
+    trajectory, _ = HarnessRunner(db, retriever, SearchThenInspect(), search_query_fusion=True,
+                                  search_result_attributes=True).run(_task())
+    assert {i["product_id"]: i["attributes"]["Color"] for i in trajectory.tool_calls[0].result["items"]} == {
+        "P00002": "Red", "P00001": "Blue"}

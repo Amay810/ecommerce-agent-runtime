@@ -650,7 +650,8 @@ class HarnessRunner:
                  research_enabled: bool = False,
                  research_budget: int | None = None,
                  ground_search_filters: bool = False,
-                 search_query_fusion: bool = False):
+                 search_query_fusion: bool = False,
+                 search_result_attributes: bool = False):
         self.db_path, self.retriever = Path(db_path), retriever
         self.policy, self.max_steps = policy or OraclePolicy(), max_steps
         if expose_task_progress and progress_reducer is None:
@@ -666,6 +667,7 @@ class HarnessRunner:
         # Opt-in search runtime experiments; both are off on the stable path.
         self.ground_search_filters = ground_search_filters
         self.search_query_fusion = search_query_fusion
+        self.search_result_attributes = search_result_attributes
     def _reset(self, task: TaskSpec) -> None:
         if not task.initial_state: return
         conn = connect(self.db_path)
@@ -696,6 +698,7 @@ class HarnessRunner:
         fusion = (ContextFusionRetriever(self.retriever)
                   if self.search_query_fusion and self.retriever is not None else None)
         tools = RetailTools(self.db_path, fusion or self.retriever)
+        tools.expose_attributes = self.search_result_attributes
         simulator = self.user_simulator_factory(task)
         bind = getattr(self.policy, "bind", None)
         if callable(bind):
@@ -1063,7 +1066,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task"); run.add_argument("--ground-search-filters", action="store_true", help="Drop search filters the user never stated"); run.add_argument("--search-query-fusion", action="store_true", help="Fuse each search with the latest user message")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task"); run.add_argument("--ground-search-filters", action="store_true", help="Drop search filters the user never stated"); run.add_argument("--search-query-fusion", action="store_true", help="Fuse each search with the latest user message"); run.add_argument("--search-result-attributes", action="store_true", help="Show product attributes in search and get_product results")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -1094,13 +1097,13 @@ def main() -> None:
         from .research_find import RetrievalTop1Policy
         policy = RetrievalTop1Policy()
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
-    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget,ground_search_filters=args.ground_search_filters,search_query_fusion=args.search_query_fusion),TrajectoryStore(args.store); results=[]; details=[]
+    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget,ground_search_filters=args.ground_search_filters,search_query_fusion=args.search_query_fusion,search_result_attributes=args.search_result_attributes),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)
     if args.split: tasks=[task for task in tasks if task.split==args.split]
     for task in tasks:
         for repeat in range(args.repeats):
             repeated=TaskSpec(**{**asdict(task),"seed":task.seed+repeat}); trajectory,result=runner.run(repeated); store.save(trajectory,result); results.append(result); details.append({"trajectory_id":trajectory.trajectory_id,**result.to_dict()})
-    report={"policy":args.policy,"configuration":{"ground_search_filters":args.ground_search_filters,"search_query_fusion":args.search_query_fusion},"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
+    report={"policy":args.policy,"configuration":{"ground_search_filters":args.ground_search_filters,"search_query_fusion":args.search_query_fusion,"search_result_attributes":args.search_result_attributes},"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
 
 
 if __name__=="__main__": main()

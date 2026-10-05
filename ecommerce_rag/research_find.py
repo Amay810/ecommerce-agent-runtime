@@ -75,9 +75,8 @@ def grade_research_find(task: TaskSpec, trajectory: Trajectory) -> dict[str, Any
     answered = answer_product_ids(trajectory.final_answer)
     retrieved = retrieved_product_ids(trajectory)
     near_misses = {str(x).upper() for x in contract.get("near_miss_product_ids") or []}
-    abstained = not answered and any(
-        marker in (trajectory.final_answer or "").casefold() for marker in ABSTENTION_MARKERS
-    )
+    has_marker = any(marker in (trajectory.final_answer or "").casefold() for marker in ABSTENTION_MARKERS)
+    abstained = not answered and has_marker
     calls = [call.name for call in trajectory.tool_calls]
     diagnostics = {
         "task_type": contract.get("task_type"),
@@ -87,6 +86,9 @@ def grade_research_find(task: TaskSpec, trajectory: Trajectory) -> dict[str, Any
         "gold_retrieved": bool(expected and expected in retrieved),
         "gold_best_search_rank": retrieved.get(expected) if expected else None,
         "answered_near_miss": bool(set(answered) & near_misses),
+        # Diagnostic only: an abstention phrase next to a product ID still fails
+        # the public "no product ID" rule, but is not the same as recommending it.
+        "abstention_phrase_with_product_id": bool(answered and has_marker),
         "search_calls": calls.count("search_catalog"),
         "get_product_calls": calls.count("get_product"),
         "compare_calls": calls.count("compare_products"),

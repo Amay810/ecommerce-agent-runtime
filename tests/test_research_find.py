@@ -308,3 +308,10 @@ def test_mining_candidates_never_touch_the_active_locked_split():
     assert not {source(t) for t in candidates} & {source(t) for t in previous}
     r2_locked_groups = {group_key(products[source(t)]) for t in read(R2) if t["split"] == "locked"}
     assert not {group_key(products[source(t)]) for t in candidates} & r2_locked_groups
+
+
+def test_abstention_phrase_next_to_a_product_id_is_flagged_but_still_fails():
+    task = _task(answer=None, task_type="no_answer")
+    result = grade(task, _trajectory(task, "没有符合条件的商品，最接近的是 P00003，但颜色不同。", [_search("P00003")]))
+    assert result.failure_type == "answered-unsatisfiable"
+    assert result.answer_diagnostics["abstention_phrase_with_product_id"] is True
