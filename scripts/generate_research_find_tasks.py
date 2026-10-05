@@ -258,8 +258,11 @@ def find_answerable(catalog: Catalog, product: Product, *, with_brand: bool, rng
     return None
 
 
-def find_unsatisfiable(catalog: Catalog, product: Product, rng: random.Random) -> list[Constraint] | None:
+def find_unsatisfiable(catalog: Catalog, product: Product, rng: random.Random,
+                       keys: set[str] | None = None) -> list[Constraint] | None:
     brand, attrs, _ = candidate_constraints(product)
+    if keys is not None:
+        attrs = [a for a in attrs if a.key in keys]
     if brand is None or not attrs:
         return None
     type_constraint = Constraint("type", "type", product.leaf)
@@ -293,6 +296,50 @@ def typo(value: str, rng: random.Random) -> str | None:
     return candidate if norm(candidate) != norm(value) else None
 
 
+def constraint_signature(constraints: list[dict[str, Any]] | list[Constraint]) -> tuple[str, ...]:
+    """Structure of a task's non-type constraints, e.g. ('attribute:Color', 'brand')."""
+    parts = []
+    for item in constraints:
+        kind, key = (item.kind, item.key) if isinstance(item, Constraint) else (item["kind"], item["key"])
+        if kind != "type":
+            parts.append(f"attribute:{key}" if kind == "attribute" else kind)
+    return tuple(sorted(parts))
+
+
+def find_for_signature(catalog: Catalog, product: Product, task_type: str, signature: tuple[str, ...],
+                       rng: random.Random) -> list[Constraint] | None:
+    """Build a task of ``task_type`` whose constraints have exactly ``signature``."""
+    brand, attrs, price = candidate_constraints(product)
+    by_key = {a.key: a for a in attrs}
+    wanted_keys = {part.split(":", 1)[1] for part in signature if part.startswith("attribute:")}
+    if task_type == "no_answer":
+        if "brand" not in signature or len(wanted_keys) != 1 or len(signature) != 2:
+            return None
+        found = find_unsatisfiable(catalog, product, rng, keys=wanted_keys)
+        return found if found and constraint_signature(found) == signature else None
+    parts: list[Constraint] = []
+    if "brand" in signature:
+        if brand is None:
+            return None
+        parts.append(brand)
+    for key in sorted(wanted_keys):
+        if key not in by_key:
+            return None
+        parts.append(by_key[key])
+    if "price" in signature:
+        if price is None:
+            return None
+        parts.append(price)
+    constraints = [Constraint("type", "type", product.leaf), *parts]
+    if constraint_signature(constraints) != signature:
+        return None
+    return constraints if minimal_unique(catalog, product, constraints) else None
+
+
+def group_key(product: Product) -> tuple[str, str]:
+    return norm(product.leaf), norm(product.brand)
+
+
 def render(product_type: str, constraints: list[Constraint], rng: random.Random, *, brand_text: str | None = None) -> str:
     phrases = []
     for constraint in constraints[1:]:
@@ -319,27 +366,66 @@ def excluded_products(paths: list[Path]) -> set[str]:
     return excluded
 
 
-def generate(products: list[Product], *, per_type_split: int, seed: int, excluded: set[str]) -> list[dict[str, Any]]:
+def build_task(catalog: Catalog, product: Product, constraints: list[Constraint], *, task_type: str,
+               split: str, index: int, seed: int, rng: random.Random, brand_text: str | None,
+               round_tag: str, extra_contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    answer_id = None if task_type == "no_answer" else product.product_id
+    return {
+        "task_id": f"rf{round_tag}_{split[:3]}_{task_type}_{index:03d}",
+        "category": "research_find",
+        "user_id": "U0001",
+        "user_goal": render(str(product.leaf), constraints, rng, brand_text=brand_text),
+        "seed": seed,
+        "gold_doc_ids": [f"product:{answer_id}"] if answer_id else [],
+        "allowed_tools": list(RESEARCH_FIND_TOOLS),
+        "required_tools": [],
+        "split": split,
+        "scoring_version": SCORING_VERSION_RESEARCH_FIND_V1,
+        "output_requirements": OUTPUT_REQUIREMENTS,
+        "evaluation_contract": {
+            "generator_version": GENERATOR_VERSION,
+            "task_type": task_type,
+            "answer_product_id": answer_id,
+            "source_product_id": product.product_id,
+            "constraints": [c.to_dict() for c in constraints],
+            "rendered_brand": brand_text,
+            "near_miss_product_ids": catalog.near_misses(constraints)[:20],
+            **(extra_contract or {}),
+        },
+    }
+
+
+def generate(products: list[Product], *, per_type_split: int, seed: int, excluded: set[str],
+             only_split: str | None = None, excluded_groups: set[tuple[str, str]] | None = None,
+             round_tag: str = "1", extra_contract: dict[str, Any] | None = None,
+             balance_types: bool = False) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     catalog = Catalog(products)
-    eligible = [p for p in products if p.leaf and p.product_id not in excluded]
+    excluded_groups = excluded_groups or set()
+    eligible = [p for p in products if p.leaf and p.product_id not in excluded and group_key(p) not in excluded_groups]
     rng.shuffle(eligible)
     used: set[str] = set()
     counts: Counter = Counter()
     tasks: list[dict[str, Any]] = []
     brands = {norm(p.brand) for p in products if p.brand}
+    splits = (only_split,) if only_split else ("exploration", "locked")
 
     def full(task_type: str, split: str) -> bool:
         return counts[(task_type, split)] >= per_type_split
 
     for product in eligible:
-        if all(full(t, s) for t in TASK_TYPES for s in ("exploration", "locked")):
+        if all(full(t, s) for t in TASK_TYPES for s in splits):
             break
         if product.product_id in used:
             continue
-        split = split_for(product, seed)
+        split = only_split or split_for(product, seed)
         local = random.Random(f"{seed}:{product.product_id}")
-        for task_type in TASK_TYPES:
+        order = TASK_TYPES
+        if balance_types:
+            # Types that share a product structure (near_sku/typo_alias) would
+            # otherwise starve whichever is tried later once products run short.
+            order = sorted(TASK_TYPES, key=lambda t: (counts[(t, split)], TASK_TYPES.index(t)))
+        for task_type in order:
             if full(task_type, split):
                 continue
             brand_text = None
@@ -357,31 +443,70 @@ def generate(products: list[Product], *, per_type_split: int, seed: int, exclude
             index = counts[(task_type, split)] + 1
             counts[(task_type, split)] += 1
             used.add(product.product_id)
-            answer_id = None if task_type == "no_answer" else product.product_id
-            tasks.append({
-                "task_id": f"rf1_{split[:3]}_{task_type}_{index:03d}",
-                "category": "research_find",
-                "user_id": "U0001",
-                "user_goal": render(str(product.leaf), constraints, local, brand_text=brand_text),
-                "seed": seed + len(tasks),
-                "gold_doc_ids": [f"product:{answer_id}"] if answer_id else [],
-                "allowed_tools": list(RESEARCH_FIND_TOOLS),
-                "required_tools": [],
-                "split": split,
-                "scoring_version": SCORING_VERSION_RESEARCH_FIND_V1,
-                "output_requirements": OUTPUT_REQUIREMENTS,
-                "evaluation_contract": {
-                    "generator_version": GENERATOR_VERSION,
-                    "task_type": task_type,
-                    "answer_product_id": answer_id,
-                    "source_product_id": product.product_id,
-                    "constraints": [c.to_dict() for c in constraints],
-                    "rendered_brand": brand_text,
-                    "near_miss_product_ids": catalog.near_misses(constraints)[:20],
-                },
-            })
+            tasks.append(build_task(
+                catalog, product, constraints, task_type=task_type, split=split, index=index,
+                seed=seed + len(tasks), rng=local, brand_text=brand_text, round_tag=round_tag,
+                extra_contract=extra_contract,
+            ))
             break
     return tasks
+
+
+def generate_failure_driven(products: list[Product], failures: list[dict[str, Any]], *, variants_per_failure: int,
+                            seed: int, excluded: set[str], round_tag: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """New exploration tasks that repeat the type and constraint structure of observed failures.
+
+    Each failure asks for ``variants_per_failure`` tasks with the same task type
+    and constraint signature, built from products never used before.
+    """
+    rng = random.Random(seed)
+    catalog = Catalog(products)
+    eligible = [p for p in products if p.leaf and p.product_id not in excluded]
+    rng.shuffle(eligible)
+    brands = {norm(p.brand) for p in products if p.brand}
+    quotas: Counter = Counter()
+    drivers: dict[tuple[str, tuple[str, ...]], list[dict[str, str]]] = defaultdict(list)
+    for failure in failures:
+        key = (failure["task_type"], tuple(failure["signature"]))
+        quotas[key] += variants_per_failure
+        drivers[key].append({"task_id": failure["task_id"], "failure_type": failure["failure_type"]})
+    requested = dict(quotas)
+    counts: Counter = Counter()
+    tasks: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for product in eligible:
+        if not +quotas:
+            break
+        local = random.Random(f"{seed}:{product.product_id}")
+        for key in sorted(k for k, n in quotas.items() if n > 0):
+            task_type, signature = key
+            constraints = find_for_signature(catalog, product, task_type, signature, local)
+            if not constraints:
+                continue
+            brand_text = None
+            if task_type == "typo_alias":
+                brand = next(c for c in constraints if c.kind == "brand")
+                brand_text = typo(str(brand.value), local)
+                if not brand_text or norm(brand_text) in brands:
+                    continue
+            quotas[key] -= 1
+            counts[task_type] += 1
+            used.add(product.product_id)
+            tasks.append(build_task(
+                catalog, product, constraints, task_type=task_type, split="exploration",
+                index=counts[task_type], seed=seed + len(tasks), rng=local, brand_text=brand_text,
+                round_tag=round_tag, extra_contract={
+                    "generation_mode": "failure_driven",
+                    "constraint_signature": list(signature),
+                    "driven_by": drivers[key],
+                },
+            ))
+            break
+    report = {
+        "requested": {f"{t}|{'+'.join(sig)}": n for (t, sig), n in sorted(requested.items())},
+        "shortfall": {f"{t}|{'+'.join(sig)}": n for (t, sig), n in sorted(quotas.items()) if n > 0},
+    }
+    return tasks, report
 
 
 def validate_tasks(tasks: list[dict[str, Any]], products: list[Product]) -> list[str]:
@@ -428,9 +553,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20261005)
     parser.add_argument("--output", type=Path, default=Path("ecommerce_rag/data/research_find_v1.jsonl"))
     parser.add_argument("--validate-only", action="store_true", help="Re-check an existing task file and exit")
+    parser.add_argument("--evolve-from-report", type=Path,
+                        help="Harness report whose exploration failures drive a new round")
+    parser.add_argument("--parent-tasks", type=Path, default=Path("ecommerce_rag/data/research_find_v1.jsonl"))
+    parser.add_argument("--variants-per-failure", type=int, default=2)
+    parser.add_argument("--round-tag", default="2")
+    parser.add_argument("--locked-seed", type=int, default=20261006)
     args = parser.parse_args()
 
     products = load_products(args.products, args.category_paths)
+    if args.evolve_from_report:
+        evolve(args, products)
+        return
     if args.validate_only:
         existing = [json.loads(line) for line in args.output.read_text(encoding="utf-8").splitlines() if line.strip()]
         errors = validate_tasks(existing, products)
@@ -473,6 +607,78 @@ def main() -> None:
     }
     args.output.with_suffix(".manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({k: manifest[k] for k in ("tasks", "counts", "output_sha256")}, ensure_ascii=False, indent=2))
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def evolve(args: argparse.Namespace, products: list[Product]) -> None:
+    """Failure-driven exploration plus a fresh, untargeted locked split."""
+    by_id = {p.product_id: p for p in products}
+    parent = [json.loads(line) for line in args.parent_tasks.read_text(encoding="utf-8").splitlines() if line.strip()]
+    parent_by_id = {t["task_id"]: t for t in parent}
+    report = json.loads(args.evolve_from_report.read_text(encoding="utf-8"))
+    failures = []
+    for row in report["details"]:
+        task = parent_by_id.get(row["task_id"])
+        if task is None or row.get("split") != "exploration" or row.get("success"):
+            continue
+        contract = task["evaluation_contract"]
+        failures.append({
+            "task_id": row["task_id"], "failure_type": row.get("failure_type"),
+            "task_type": contract["task_type"], "signature": list(constraint_signature(contract["constraints"])),
+        })
+    used_sources = {t["evaluation_contract"]["source_product_id"] for t in parent}
+    excluded = excluded_products(args.exclude) | used_sources
+    explore, driven = generate_failure_driven(
+        products, failures, variants_per_failure=args.variants_per_failure, seed=args.seed,
+        excluded=excluded, round_tag=args.round_tag)
+    explore_sources = {t["evaluation_contract"]["source_product_id"] for t in explore}
+    exploration_groups = {group_key(by_id[t["evaluation_contract"]["source_product_id"]])
+                          for t in parent + explore if t["split"] == "exploration"}
+    locked = generate(products, per_type_split=args.per_type_split, seed=args.locked_seed,
+                      excluded=excluded | explore_sources, only_split="locked",
+                      excluded_groups=exploration_groups, round_tag=args.round_tag,
+                      extra_contract={"generation_mode": "fresh_heldout"}, balance_types=True)
+    tasks = explore + locked
+    errors = validate_tasks(tasks, products)
+    if errors:
+        raise SystemExit("evolved tasks failed validation:\n" + "\n".join(errors))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text("".join(json.dumps(t, ensure_ascii=False) + "\n" for t in tasks), encoding="utf-8")
+    manifest = {
+        "generator_version": GENERATOR_VERSION,
+        "scoring_version": SCORING_VERSION_RESEARCH_FIND_V1,
+        "round_tag": args.round_tag,
+        "parent_tasks": {"path": str(args.parent_tasks), "sha256": sha256_file(args.parent_tasks)},
+        "driving_report": {"path": str(args.evolve_from_report), "sha256": sha256_file(args.evolve_from_report),
+                           "configuration": report.get("configuration"), "split": "exploration"},
+        "driving_failures": dict(Counter(f"{f['task_type']}|{f['failure_type']}" for f in failures).most_common()),
+        "variants_per_failure": args.variants_per_failure,
+        "exploration_seed": args.seed,
+        "locked_seed": args.locked_seed,
+        "failure_driven_exploration": {**driven, "tasks": len(explore),
+                                       "by_type": dict(Counter(t["evaluation_contract"]["task_type"] for t in explore))},
+        "fresh_locked": {"tasks": len(locked), "per_type": args.per_type_split,
+                         "by_type": dict(Counter(t["evaluation_contract"]["task_type"] for t in locked))},
+        "inputs": {
+            "products": {"path": str(args.products), "sha256": sha256_file(args.products)},
+            "category_paths": {"path": str(args.category_paths), "sha256": sha256_file(args.category_paths)},
+            "excluded_gold_sources": [str(p) for p in args.exclude],
+        },
+        "output_sha256": sha256_file(args.output),
+        "rules": [
+            "only exploration failures drive generation; locked results never do",
+            "exploration variants repeat a failed task's type and constraint signature on unused products",
+            "locked is untargeted: same per-type balance as round 1, fresh seed, types assigned by remaining quota",
+            "locked excludes every previously used source product and every (leaf, brand) group seen in exploration",
+            "all round-1 invariants are re-validated on the serialized tasks",
+        ],
+    }
+    args.output.with_suffix(".manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({k: manifest[k] for k in ("driving_failures", "failure_driven_exploration", "fresh_locked",
+                                               "output_sha256")}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

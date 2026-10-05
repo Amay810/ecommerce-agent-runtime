@@ -204,3 +204,70 @@ def test_committed_task_file_passes_validation_against_the_corpus():
     tasks = [json.loads(line) for line in Path("ecommerce_rag/data/research_find_v1.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(tasks) == 200
     assert validate_tasks(tasks, load_products(CORPUS, PATHS)) == []
+
+
+def _wide_catalog():
+    products = []
+    colors = ["Blue", "Red", "Green", "Black"]
+    for i, brand in enumerate(["Acme", "Zenta", "Corvo", "Lumix", "Pavla", "Orbit"]):
+        for j, color in enumerate(colors):
+            pid = f"P{1 + i * 10 + j:05d}"
+            products.append(_product(pid, "Earbuds", brand, color, material=["Plastic", "Metal"][j % 2]))
+    return products
+
+
+def test_failure_driven_variants_repeat_type_and_signature_on_new_products():
+    from scripts.generate_research_find_tasks import constraint_signature, generate_failure_driven
+
+    products = _wide_catalog()
+    signature = ("attribute:Color", "brand")
+    failures = [{"task_id": "rf1_exp_near_sku_001", "failure_type": "false-abstention",
+                 "task_type": "near_sku", "signature": list(signature)}]
+    excluded = {"P00001"}
+    tasks, report = generate_failure_driven(products, failures, variants_per_failure=3, seed=11,
+                                            excluded=excluded, round_tag="2")
+    assert len(tasks) == 3 and report["shortfall"] == {}
+    for task in tasks:
+        contract = task["evaluation_contract"]
+        assert task["split"] == "exploration" and task["task_id"].startswith("rf2_exp_near_sku_")
+        assert contract["task_type"] == "near_sku"
+        assert constraint_signature(contract["constraints"]) == signature
+        assert contract["source_product_id"] not in excluded
+        assert contract["driven_by"] == [{"task_id": "rf1_exp_near_sku_001", "failure_type": "false-abstention"}]
+    assert validate_tasks(tasks, products) == []
+
+
+def test_fresh_locked_skips_excluded_groups_and_balances_types():
+    from scripts.generate_research_find_tasks import group_key
+
+    products = _wide_catalog()
+    blocked = {("earbuds", "acme"), ("earbuds", "zenta")}
+    tasks = generate(products, per_type_split=2, seed=5, excluded=set(), only_split="locked",
+                     excluded_groups=blocked, round_tag="2", balance_types=True,
+                     extra_contract={"generation_mode": "fresh_heldout"})
+    by_id = {p.product_id: p for p in products}
+    assert tasks and all(t["split"] == "locked" for t in tasks)
+    assert all(group_key(by_id[t["evaluation_contract"]["source_product_id"]]) not in blocked for t in tasks)
+    assert all(t["evaluation_contract"]["generation_mode"] == "fresh_heldout" for t in tasks)
+    assert validate_tasks(tasks, products) == []
+
+
+R2 = Path("ecommerce_rag/data/research_find_r2.jsonl")
+
+
+@pytest.mark.skipif(not (CORPUS.exists() and PATHS.exists() and R2.exists()), reason="local 5k corpus not built")
+def test_round_two_is_disjoint_from_round_one_and_locked_is_isolated():
+    from scripts.generate_research_find_tasks import group_key, load_products
+
+    products = {p.product_id: p for p in load_products(CORPUS, PATHS)}
+    v1 = [json.loads(x) for x in Path("ecommerce_rag/data/research_find_v1.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+    r2 = [json.loads(x) for x in R2.read_text(encoding="utf-8").splitlines() if x.strip()]
+    source = lambda t: t["evaluation_contract"]["source_product_id"]
+    assert not {source(t) for t in r2} & {source(t) for t in v1}
+    assert len({source(t) for t in r2}) == len(r2)
+    exploration_groups = {group_key(products[source(t)]) for t in v1 + r2 if t["split"] == "exploration"}
+    locked = [t for t in r2 if t["split"] == "locked"]
+    assert locked and not {group_key(products[source(t)]) for t in locked} & exploration_groups
+    assert all(t["evaluation_contract"].get("generation_mode") == "failure_driven"
+               for t in r2 if t["split"] == "exploration")
+    assert validate_tasks(r2, list(products.values())) == []

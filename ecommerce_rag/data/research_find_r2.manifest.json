@@ -1,0 +1,107 @@
+{
+  "generator_version": "research-find-generator-v1",
+  "scoring_version": "research-find-v1",
+  "round_tag": "2",
+  "parent_tasks": {
+    "path": "ecommerce_rag/data/research_find_v1.jsonl",
+    "sha256": "68873f8d0607a1075c8cd92e5597b8aa856a4f66e79b0cad8cb5c1b81d974079"
+  },
+  "driving_report": {
+    "path": "logs/research_find_v1_20261005/db3374c_native_exploration_grounding_fusion.json",
+    "sha256": "cbad5858c1afd9151168c2e5751068cea3a532cdfd7dc4338fd4cdc995be3504",
+    "configuration": {
+      "ground_search_filters": true,
+      "search_query_fusion": true
+    },
+    "split": "exploration"
+  },
+  "driving_failures": {
+    "typo_alias|false-abstention": 18,
+    "near_sku|false-abstention": 9,
+    "no_answer|answered-unsatisfiable": 5,
+    "multi_constraint|false-abstention": 5,
+    "multi_constraint|never-retrieved": 3,
+    "multi_constraint|retrieved-not-selected": 2,
+    "typo_alias|multiple-products-answered": 1
+  },
+  "variants_per_failure": 2,
+  "exploration_seed": 20261005,
+  "locked_seed": 20261006,
+  "failure_driven_exploration": {
+    "requested": {
+      "multi_constraint|attribute:Color+attribute:Material": 2,
+      "multi_constraint|attribute:Color+attribute:Material+price": 2,
+      "multi_constraint|attribute:Color+attribute:Shape": 2,
+      "multi_constraint|attribute:Connectivity Technology+price": 2,
+      "multi_constraint|attribute:Material+attribute:Pattern": 2,
+      "multi_constraint|attribute:Material+attribute:Shape": 2,
+      "multi_constraint|attribute:Pattern+attribute:Size": 4,
+      "multi_constraint|attribute:Shape+attribute:Special Feature+attribute:Style": 2,
+      "multi_constraint|attribute:Style+price": 2,
+      "near_sku|attribute:Age Range (Description)+brand": 2,
+      "near_sku|attribute:Color+brand": 8,
+      "near_sku|attribute:Fabric Type+brand": 2,
+      "near_sku|attribute:Room Type+brand": 2,
+      "near_sku|attribute:Size+brand": 2,
+      "near_sku|attribute:Special Feature+brand": 2,
+      "no_answer|attribute:Color+brand": 6,
+      "no_answer|attribute:Material+brand": 2,
+      "no_answer|attribute:Special Feature+brand": 2,
+      "typo_alias|attribute:Capacity+brand": 2,
+      "typo_alias|attribute:Color+brand": 14,
+      "typo_alias|attribute:Compatible Devices+brand": 4,
+      "typo_alias|attribute:Connectivity Technology+brand": 2,
+      "typo_alias|attribute:Material+brand": 8,
+      "typo_alias|attribute:Mounting Type+brand": 2,
+      "typo_alias|attribute:Theme+brand": 2,
+      "typo_alias|brand+price": 4
+    },
+    "shortfall": {
+      "multi_constraint|attribute:Connectivity Technology+price": 2,
+      "multi_constraint|attribute:Shape+attribute:Special Feature+attribute:Style": 2,
+      "typo_alias|attribute:Compatible Devices+brand": 1,
+      "typo_alias|attribute:Material+brand": 3,
+      "typo_alias|attribute:Mounting Type+brand": 2
+    },
+    "tasks": 76,
+    "by_type": {
+      "no_answer": 10,
+      "multi_constraint": 16,
+      "near_sku": 18,
+      "typo_alias": 32
+    }
+  },
+  "fresh_locked": {
+    "tasks": 98,
+    "per_type": 25,
+    "by_type": {
+      "no_answer": 25,
+      "multi_constraint": 25,
+      "near_sku": 25,
+      "typo_alias": 23
+    }
+  },
+  "inputs": {
+    "products": {
+      "path": "ecommerce_rag/data/amazon_products_5k.jsonl",
+      "sha256": "4d5e175c67374bc8ebf1e92a0c3ea1f95205103ee4998d3d5f3678fad62a5f76"
+    },
+    "category_paths": {
+      "path": "ecommerce_rag/data/amazon_products_5k.category_paths.jsonl",
+      "sha256": "a21b43aa5be90b927b49493389cb1b2bbab5c7ff1d7ab2a3bcaaf2fac0e97764"
+    },
+    "excluded_gold_sources": [
+      "ecommerce_rag/data/retrieval_eval_250.jsonl",
+      "ecommerce_rag/data/retrieval_eval_v2_300.jsonl",
+      "ecommerce_rag/data/retrieval_eval_v3_150.jsonl"
+    ]
+  },
+  "output_sha256": "b3919865c48d54fb742875947443575f14485e8c28bb4b34a575fc6a58f08758",
+  "rules": [
+    "only exploration failures drive generation; locked results never do",
+    "exploration variants repeat a failed task's type and constraint signature on unused products",
+    "locked is untargeted: same per-type balance as round 1, fresh seed, types assigned by remaining quota",
+    "locked excludes every previously used source product and every (leaf, brand) group seen in exploration",
+    "all round-1 invariants are re-validated on the serialized tasks"
+  ]
+}
