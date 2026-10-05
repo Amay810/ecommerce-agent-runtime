@@ -559,11 +559,20 @@ def main() -> None:
     parser.add_argument("--variants-per-failure", type=int, default=2)
     parser.add_argument("--round-tag", default="2")
     parser.add_argument("--locked-seed", type=int, default=20261006)
+    parser.add_argument("--mine-candidates", action="store_true",
+                        help="Write an untargeted exploration candidate pool for model-in-the-loop mining")
+    parser.add_argument("--exclude-tasks", type=Path, nargs="*", default=[],
+                        help="Task files whose source products are excluded")
+    parser.add_argument("--reserve-locked-from", type=Path, nargs="*", default=[],
+                        help="Task files whose locked (leaf, brand) groups stay reserved (the active held-out)")
     args = parser.parse_args()
 
     products = load_products(args.products, args.category_paths)
     if args.evolve_from_report:
         evolve(args, products)
+        return
+    if args.mine_candidates:
+        mining_candidates(args, products)
         return
     if args.validate_only:
         existing = [json.loads(line) for line in args.output.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -611,6 +620,52 @@ def main() -> None:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def mining_candidates(args: argparse.Namespace, products: list[Product]) -> None:
+    """Untargeted exploration candidates; the current system later selects hard cases."""
+    by_id = {p.product_id: p for p in products}
+    def read(paths: list[Path]) -> list[dict[str, Any]]:
+        return [json.loads(line) for path in paths
+                for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    used = {t["evaluation_contract"]["source_product_id"] for t in read(args.exclude_tasks)}
+    reserved_groups = {group_key(by_id[t["evaluation_contract"]["source_product_id"]])
+                       for t in read(args.reserve_locked_from) if t["split"] == "locked"}
+    tasks = generate(products, per_type_split=args.per_type_split, seed=args.seed,
+                     excluded=excluded_products(args.exclude) | used, only_split="exploration",
+                     excluded_groups=reserved_groups, round_tag=args.round_tag,
+                     extra_contract={"generation_mode": "mining_candidate"}, balance_types=True)
+    errors = validate_tasks(tasks, products)
+    if errors:
+        raise SystemExit("mining candidates failed validation:\n" + "\n".join(errors))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text("".join(json.dumps(t, ensure_ascii=False) + "\n" for t in tasks), encoding="utf-8")
+    manifest = {
+        "generator_version": GENERATOR_VERSION,
+        "mode": "mining_candidates",
+        "round_tag": args.round_tag,
+        "seed": args.seed,
+        "per_type": args.per_type_split,
+        "tasks": len(tasks),
+        "by_type": dict(Counter(t["evaluation_contract"]["task_type"] for t in tasks)),
+        "excluded_task_files": [{"path": str(p), "sha256": sha256_file(p)} for p in args.exclude_tasks],
+        "reserved_locked_files": [{"path": str(p), "sha256": sha256_file(p)} for p in args.reserve_locked_from],
+        "reserved_locked_groups": len(reserved_groups),
+        "inputs": {
+            "products": {"path": str(args.products), "sha256": sha256_file(args.products)},
+            "category_paths": {"path": str(args.category_paths), "sha256": sha256_file(args.category_paths)},
+        },
+        "output_sha256": sha256_file(args.output),
+        "rules": [
+            "exploration only; excludes every source product used by the excluded task files",
+            "excludes every (leaf, brand) group of a locked task in the reserved files (active held-out)",
+            "types assigned by remaining quota; all round-1 invariants re-validated",
+        ],
+    }
+    args.output.with_suffix(".manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({k: manifest[k] for k in ("tasks", "by_type", "reserved_locked_groups", "output_sha256")},
+                     ensure_ascii=False, indent=2))
 
 
 def evolve(args: argparse.Namespace, products: list[Product]) -> None:

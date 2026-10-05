@@ -1,0 +1,47 @@
+{
+  "generator_version": "research-find-generator-v1",
+  "mode": "mining_candidates",
+  "round_tag": "3",
+  "seed": 20261007,
+  "per_type": 50,
+  "tasks": 110,
+  "by_type": {
+    "no_answer": 50,
+    "multi_constraint": 50,
+    "near_sku": 6,
+    "typo_alias": 4
+  },
+  "excluded_task_files": [
+    {
+      "path": "ecommerce_rag/data/research_find_v1.jsonl",
+      "sha256": "68873f8d0607a1075c8cd92e5597b8aa856a4f66e79b0cad8cb5c1b81d974079"
+    },
+    {
+      "path": "ecommerce_rag/data/research_find_r2.jsonl",
+      "sha256": "b3919865c48d54fb742875947443575f14485e8c28bb4b34a575fc6a58f08758"
+    }
+  ],
+  "reserved_locked_files": [
+    {
+      "path": "ecommerce_rag/data/research_find_r2.jsonl",
+      "sha256": "b3919865c48d54fb742875947443575f14485e8c28bb4b34a575fc6a58f08758"
+    }
+  ],
+  "reserved_locked_groups": 94,
+  "inputs": {
+    "products": {
+      "path": "ecommerce_rag/data/amazon_products_5k.jsonl",
+      "sha256": "4d5e175c67374bc8ebf1e92a0c3ea1f95205103ee4998d3d5f3678fad62a5f76"
+    },
+    "category_paths": {
+      "path": "ecommerce_rag/data/amazon_products_5k.category_paths.jsonl",
+      "sha256": "a21b43aa5be90b927b49493389cb1b2bbab5c7ff1d7ab2a3bcaaf2fac0e97764"
+    }
+  },
+  "output_sha256": "b26fa52f1410141e1ea5a3bc024a0bcd794fbbef00808d14f996fae4cd344bf8",
+  "rules": [
+    "exploration only; excludes every source product used by the excluded task files",
+    "excludes every (leaf, brand) group of a locked task in the reserved files (active held-out)",
+    "types assigned by remaining quota; all round-1 invariants re-validated"
+  ]
+}

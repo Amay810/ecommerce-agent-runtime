@@ -271,3 +271,40 @@ def test_round_two_is_disjoint_from_round_one_and_locked_is_isolated():
     assert all(t["evaluation_contract"].get("generation_mode") == "failure_driven"
                for t in r2 if t["split"] == "exploration")
     assert validate_tasks(r2, list(products.values())) == []
+
+
+def test_mining_keeps_failures_and_a_seeded_calibration_sample():
+    from scripts.mine_research_find_hard_cases import mine
+
+    candidates = [{"task_id": f"t{i}", "split": "exploration", "evaluation_contract": {"task_type": "multi_constraint"}}
+                  for i in range(40)]
+    report = {"details": [{"task_id": f"t{i}", "success": i % 2 == 0, "failure_type": None if i % 2 == 0 else "false-abstention"}
+                          for i in range(40)]}
+    first = mine(candidates, report, calibration_rate=0.25, seed=1, report_sha256="abc")
+    again = mine(candidates, report, calibration_rate=0.25, seed=1, report_sha256="abc")
+    assert first == again
+    failed = [t for t in first if t["evaluation_contract"]["mining"]["outcome"] == "failed"]
+    passed = [t for t in first if t["evaluation_contract"]["mining"]["outcome"] == "passed_calibration"]
+    assert len(failed) == 20 and 0 < len(passed) < 20
+    assert all(t["evaluation_contract"]["generation_mode"] == "model_mined" for t in first)
+    with pytest.raises(SystemExit):
+        mine(candidates + [{"task_id": "extra", "evaluation_contract": {}}], report,
+             calibration_rate=0.25, seed=1, report_sha256="abc")
+
+
+R3C = Path("ecommerce_rag/data/research_find_r3_candidates.jsonl")
+
+
+@pytest.mark.skipif(not (CORPUS.exists() and PATHS.exists() and R3C.exists()), reason="local 5k corpus not built")
+def test_mining_candidates_never_touch_the_active_locked_split():
+    from scripts.generate_research_find_tasks import group_key, load_products
+
+    products = {p.product_id: p for p in load_products(CORPUS, PATHS)}
+    read = lambda path: [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    previous = read(Path("ecommerce_rag/data/research_find_v1.jsonl")) + read(R2)
+    candidates = read(R3C)
+    source = lambda t: t["evaluation_contract"]["source_product_id"]
+    assert candidates and all(t["split"] == "exploration" for t in candidates)
+    assert not {source(t) for t in candidates} & {source(t) for t in previous}
+    r2_locked_groups = {group_key(products[source(t)]) for t in read(R2) if t["split"] == "locked"}
+    assert not {group_key(products[source(t)]) for t in candidates} & r2_locked_groups
