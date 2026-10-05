@@ -40,6 +40,9 @@ _ORDER_FIELDS = (
 )
 _ITEM_FIELDS = ("item_id", "product_id", "name", "title", "price", "options", "available")
 _PRODUCT_FIELDS = ("product_id", "item_id", "title", "name", "category", "price", "inventory", "options", "available")
+# Present only when the opt-in attribute view is enabled; kept so that view
+# actually reaches the model instead of being compacted away.
+_ATTRIBUTE_VIEW = ("attributes",)
 
 
 @dataclass(frozen=True)
@@ -117,15 +120,17 @@ def compact_tool_result(name: str | None, result: Any) -> Any:
         "request_id", "status", "return_status", "handoff_id", "idempotent_replay",
     ))
     if name == "search_catalog":
-        base["items"] = [_pick(item, _PRODUCT_FIELDS) for item in (result.get("items") or [])[:12]]
+        base["items"] = [_pick(item, _PRODUCT_FIELDS + _ATTRIBUTE_VIEW) for item in (result.get("items") or [])[:12]]
     elif name == "get_product":
         base["product"] = _compact_product(result.get("product") or result)
         evidence = result.get("evidence")
         if isinstance(evidence, list):
             base["evidence"] = [str(text)[:600] for text in evidence[:3]]
+        base.update(_pick(result, _ATTRIBUTE_VIEW))
     elif name == "compare_products":
         base["products"] = [
-            {"ok": row.get("ok"), "product": _compact_product(row.get("product") or row)}
+            {"ok": row.get("ok"), "product": _compact_product(row.get("product") or row),
+             **_pick(row, _ATTRIBUTE_VIEW)}
             for row in (result.get("products") or [])[:12] if isinstance(row, dict)
         ]
     elif name == "get_policy":
