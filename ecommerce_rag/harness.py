@@ -46,6 +46,15 @@ _TOOL_CONTRACT_VERSIONS = {
 }
 
 
+# Public protocol note shown to the policy when runtime write approval is on;
+# without it the policy keeps asking for confirmation in plain text, which ends
+# the episode under the strict interaction protocol.
+RUNTIME_WRITE_APPROVAL_NOTE = (
+    "需要修改订单时，直接调用对应的写工具并给出准确参数；系统会把这次操作的摘要直接发给用户确认，"
+    "用户同意后才会执行，拒绝则不会执行。不要用普通文本向用户征求确认。"
+)
+
+
 def runtime_write_summary(name: str, arguments: dict[str, Any]) -> str:
     """Canonical text the trusted layer shows the user for one exact write."""
     parts = [f"{key}={json.dumps(arguments[key], ensure_ascii=False)}"
@@ -846,7 +855,10 @@ class HarnessRunner:
                 copy.deepcopy(history), copy.deepcopy(_offered_tool_schemas(task)), step,
                 evidence_ledger=policy_evidence,
                 research_state=policy_research_state,
-                output_requirements=copy.deepcopy(task.output_requirements),
+                output_requirements={
+                    **copy.deepcopy(task.output_requirements),
+                    **({"write_confirmation": RUNTIME_WRITE_APPROVAL_NOTE} if self.runtime_write_approval else {}),
+                },
             )
             observations.append(asdict(observation))
             action, _initial_format_retries, policy_trace = decide(

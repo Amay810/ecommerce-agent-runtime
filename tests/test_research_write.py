@@ -139,3 +139,13 @@ def test_committed_research_write_tasks_validate_against_the_seeded_orders():
     tasks = [json.loads(x) for x in Path("ecommerce_rag/data/research_write_v1.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
     assert len(tasks) == 90
     assert validate(tasks, load_products(CORPUS, PATHS), load_orders(20260720)) == []
+
+
+def test_runtime_approval_is_disclosed_to_the_policy_only_when_enabled(pending):
+    from ecommerce_rag.harness import RUNTIME_WRITE_APPROVAL_NOTE
+
+    db, order = pending
+    plain, _ = HarnessRunner(db, None, OraclePolicy()).run(_task(order))
+    assert "write_confirmation" not in plain.observations[0]["output_requirements"]
+    shown, _ = HarnessRunner(db, None, OraclePolicy(), runtime_write_approval=True).run(_task(order, target="P04997"))
+    assert shown.observations[0]["output_requirements"]["write_confirmation"] == RUNTIME_WRITE_APPROVAL_NOTE
