@@ -42,7 +42,8 @@
   25.5%，Native Qwen3-4B 在 exploration 上 36%，与基线配对 +6pp（CI [−7, +19]），
   未显著；主要失败是模型改写查询后召回下降并误拒答。`db3374c` 增加默认关闭的
   `--ground-search-filters`、`--search-query-fusion`，exploration 上 37% → 57%
-  （CI [+10, +30]）。locked 未运行，详见 [research_find](research_find.md)。
+  （CI [+10, +30]）；locked 一次性评估 40% → 48%（CI [−2, +19]，未显著），有答案题
+  显著提升而无解题拒答下降。两个开关保持默认关闭，详见 [research_find](research_find.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。

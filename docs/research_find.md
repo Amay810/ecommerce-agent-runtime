@@ -118,4 +118,34 @@ near_sku 28/32/64，no_answer 72/68/80，typo_alias 4/20/24。最终配置的剩
 `never-retrieved` 3，`retrieved-not-selected` 2，`multiple-products-answered` 1。
 
 这些改动是看过 exploration 失败后设计的，exploration 上的提升偏乐观；是否成立以
-locked 为准，locked 尚未运行。
+locked 为准。
+
+## Step 3：locked 留出评估（一次性）
+
+同一代码 `db3374c`、同一索引和服务配置，locked 100 题上"开关全关"和"两个开关
+全开"各运行一次；运行后不再调整。R 的 locked 基线来自 Step 1（融合对 R 透传，已在
+exploration 上验证不变）。
+
+| 配置（locked 100） | 成功率 | 产物 sha256 前缀 |
+|---|---|---|
+| R：`retrieval_top1` | 21% | `f4d92b75`（Step 1 全量报告） |
+| A，开关全关 | 40% | `de3770e0`（json）/ `66b3f0cf`（sqlite） |
+| A + 溯源 + 融合 | 48% | `ca1f70b0` / `e34c2f5d` |
+
+| 比较（按题 bootstrap 95% CI） | 差值 | CI | 变好 / 变差 |
+|---|---|---|---|
+| A 关 → A + 溯源 + 融合，全部 100 题 | +8pp | [−2, +19] | 19 / 11 |
+| 同上，有答案 75 题（20 → 33 题答对） | +17.3pp | [+6.7, +28] | — |
+| 同上，无解 25 题（20 → 15 题正确拒答） | −20pp | [−40, 0] | — |
+| R → A 关 | +19pp | [+7, +32] | 31 / 12 |
+| R → A + 溯源 + 融合 | +27pp | [+17, +37] | 30 / 3 |
+
+分题型（关 → 开）：multi_constraint 20 → 48，near_sku 32 → 48，typo_alias 28 → 36，
+no_answer 80 → 60；有答案题的 gold 检索率 30.7% → 58.7%。最终配置的失败：
+`false-abstention` 23、`never-retrieved` 13、`answered-unsatisfiable` 10、
+`retrieved-not-selected` 5、`multiple-products-answered` 1。
+
+结论：留出集上，两个开关显著提高了有答案题的召回和正确率，但同时让无解题更容易
+被近似商品误答；总体提升未达到显著。exploration 的 +20pp 在 locked 上缩小为 +8pp。
+两个开关保持默认关闭。本 locked 已经使用，后续改动需要用生成器换种子重新生成
+留出集再评估。
