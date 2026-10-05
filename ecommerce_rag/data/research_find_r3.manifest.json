@@ -1,0 +1,39 @@
+{
+  "mode": "model_mined",
+  "candidates": {
+    "path": "ecommerce_rag/data/research_find_r3_candidates.jsonl",
+    "sha256": "b26fa52f1410141e1ea5a3bc024a0bcd794fbbef00808d14f996fae4cd344bf8",
+    "tasks": 110
+  },
+  "report": {
+    "path": "/root/autodl-tmp/experiments/research_find_r3_20261005/candidates_native_grounding_fusion.json",
+    "sha256": "7099142a9c35faa27e31b8bb6f169b960bf0773edca828f97507133e53028e75",
+    "configuration": {
+      "ground_search_filters": true,
+      "search_query_fusion": true
+    },
+    "policy": "native"
+  },
+  "candidate_failures": 53,
+  "candidate_failure_types": {
+    "answered-unsatisfiable": 20,
+    "false-abstention": 24,
+    "never-retrieved": 7,
+    "retrieved-not-selected": 2
+  },
+  "calibration_rate": 0.25,
+  "seed": 20261007,
+  "selected": 68,
+  "selected_by_outcome": {
+    "passed_calibration": 15,
+    "failed": 53
+  },
+  "selected_by_type": {
+    "no_answer": 28,
+    "multi_constraint": 35,
+    "typo_alias": 3,
+    "near_sku": 2
+  },
+  "output_sha256": "2b4ced3e0fcc0c617840ae23b9626177ecab3e3f2c1849da05b2cef7c499d4bb",
+  "note": "selection-biased exploration set; never report its success rate as evaluation"
+}
