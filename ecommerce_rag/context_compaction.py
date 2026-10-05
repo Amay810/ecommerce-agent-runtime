@@ -37,6 +37,9 @@ _ORDER_FIELDS = (
     "order_id", "user_id", "status", "return_status", "delivered_at",
     "quality_issue", "opened", "cancel_reason", "return_items",
     "return_payment_method_id", "request_id", "changed", "idempotent_replay",
+    # The order-item write tools require the current items and a payment
+    # method; without them the compacted view is not decision-equivalent.
+    "product_id", "item_ids", "payment_method_id", "exchange_status",
 )
 _ITEM_FIELDS = ("item_id", "product_id", "name", "title", "price", "options", "available")
 _PRODUCT_FIELDS = ("product_id", "item_id", "title", "name", "category", "price", "inventory", "options", "available")

@@ -35,3 +35,14 @@ def test_compaction_keeps_the_opt_in_attribute_view_and_nothing_new_otherwise():
     compared = compact_tool_result("compare_products", {"ok": True, "products": [product]})
     assert compared["products"][0]["attributes"] == {"Size": "Twin"}
     assert "attributes" not in compact_tool_result("get_product", {**product, "attributes": None})
+
+
+def test_compacted_order_keeps_what_order_item_writes_need():
+    from ecommerce_rag.context_compaction import compact_tool_result
+
+    order = {"order_id": "O000001", "user_id": "U0001", "status": "pending", "product_id": "P00001",
+             "item_ids": '["P00001"]', "payment_method_id": "credit_card_U0001", "shipping_address": "{}",
+             "exchange_status": None}
+    compact = compact_tool_result("get_order", {"ok": True, "order": order, "error": None})["order"]
+    assert compact == {"order_id": "O000001", "user_id": "U0001", "status": "pending", "product_id": "P00001",
+                       "item_ids": '["P00001"]', "payment_method_id": "credit_card_U0001"}
