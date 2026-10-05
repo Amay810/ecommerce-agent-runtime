@@ -9,6 +9,7 @@ from typing import Any
 SCORING_VERSION_HARNESS_V1 = "harness-v1"
 SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT = "harness-v2-tool-contract"
 SCORING_VERSION_HARNESS_V2_TERMINAL = "harness-v2-terminal"
+SCORING_VERSION_RESEARCH_FIND_V1 = "research-find-v1"
 
 
 @dataclass(frozen=True)
@@ -223,6 +224,8 @@ class GradeResult:
     interaction_protocol_failure: bool = False
     final_answer_present: bool = False
     terminal_completion: bool = False
+    # Answer-level diagnostics from opt-in scorers such as research-find-v1.
+    answer_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

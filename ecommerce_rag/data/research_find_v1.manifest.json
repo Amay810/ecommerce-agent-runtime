@@ -1,0 +1,42 @@
+{
+  "generator_version": "research-find-generator-v1",
+  "scoring_version": "research-find-v1",
+  "seed": 20261005,
+  "per_type_split": 25,
+  "tasks": 200,
+  "counts": {
+    "multi_constraint/exploration": 25,
+    "multi_constraint/locked": 25,
+    "near_sku/exploration": 25,
+    "near_sku/locked": 25,
+    "no_answer/exploration": 25,
+    "no_answer/locked": 25,
+    "typo_alias/exploration": 25,
+    "typo_alias/locked": 25
+  },
+  "inputs": {
+    "products": {
+      "path": "ecommerce_rag/data/amazon_products_5k.jsonl",
+      "sha256": "4d5e175c67374bc8ebf1e92a0c3ea1f95205103ee4998d3d5f3678fad62a5f76"
+    },
+    "category_paths": {
+      "path": "ecommerce_rag/data/amazon_products_5k.category_paths.jsonl",
+      "sha256": "a21b43aa5be90b927b49493389cb1b2bbab5c7ff1d7ab2a3bcaaf2fac0e97764"
+    },
+    "excluded_gold_sources": [
+      "ecommerce_rag/data/retrieval_eval_250.jsonl",
+      "ecommerce_rag/data/retrieval_eval_v2_300.jsonl",
+      "ecommerce_rag/data/retrieval_eval_v3_150.jsonl"
+    ]
+  },
+  "output_sha256": "68873f8d0607a1075c8cd92e5597b8aa856a4f66e79b0cad8cb5c1b81d974079",
+  "rules": [
+    "answer fixed in code before text rendering",
+    "target satisfies every constraint exactly",
+    "no other product satisfies all constraints under the broad relation",
+    "every non-type constraint is necessary (dropping it admits another product)",
+    "every constraint is observable via search fields or the get_product evidence window",
+    "no-answer: no product satisfies the swapped constraint set under the broad relation",
+    "splits are assigned by (leaf category, brand) group; retrieval-eval gold products excluded"
+  ]
+}

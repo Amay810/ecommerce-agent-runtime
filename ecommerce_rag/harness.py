@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from .domain import (
     SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
     SCORING_VERSION_HARNESS_V2_TERMINAL,
+    SCORING_VERSION_RESEARCH_FIND_V1,
     AgentAction,
     AgentObservation,
     GradeResult,
@@ -32,6 +33,11 @@ from .tools import RetailTools, WRITE_TOOLS
 from .action_constraint import apply_action_constraint
 from .legacy_closure import LegacyTaskProgressReducer, TaskProgress
 from .research_state import RESEARCH_TOOLS, budget_exhausted_answer, derive_research_state
+from .research_find import grade_research_find
+
+# Opt-in contracts where allowed_tools is the offered action space and
+# required_tools is the separately declared required subset.
+_TOOL_CONTRACT_VERSIONS = {SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT, SCORING_VERSION_RESEARCH_FIND_V1}
 
 class AgentPolicy(Protocol):
     def act(self, observation: AgentObservation) -> AgentAction: ...
@@ -76,6 +82,11 @@ class OraclePolicy:
         called = [x.get("name") for x in _tool_events(observation)]
         if task.category == "product_qa":
             return AgentAction.tool_call("search_catalog", query=task.user_goal, top_k=5) if not called else AgentAction.answer("已根据商品资料回答。")
+        if task.category == "research_find":
+            answer_id = task.evaluation_contract.get("answer_product_id")
+            if not answer_id:
+                return AgentAction.answer("商品资料中没有明确满足全部条件的商品。")
+            return AgentAction.tool_call("get_product", product_id=answer_id) if not called else AgentAction.answer(f"{answer_id}")
         if task.category == "recommend":
             return AgentAction.tool_call("search_catalog", query=task.user_goal, top_k=5, max_price=md.get("max_price")) if not called else AgentAction.answer("已完成推荐。")
         if task.category == "compare":
@@ -384,7 +395,7 @@ def _task_tool_contract(task: TaskSpec) -> tuple[set[str], set[str], bool]:
     """
     if task.scoring_version == "return-closure-v2":
         return _return_closure_v2_contract(task)
-    if task.scoring_version == SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT:
+    if task.scoring_version in _TOOL_CONTRACT_VERSIONS:
         permitted = set(task.allowed_tools)
         required = set(task.required_tools)
         missing_permission = required - permitted
@@ -398,7 +409,7 @@ def _task_tool_contract(task: TaskSpec) -> tuple[set[str], set[str], bool]:
 
 
 def _offered_tool_schemas(task: TaskSpec) -> list[dict[str, Any]]:
-    if task.scoring_version != SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT:
+    if task.scoring_version not in _TOOL_CONTRACT_VERSIONS:
         return TOOL_SCHEMAS
     permitted = set(task.allowed_tools)
     return [schema for schema in TOOL_SCHEMAS if schema["name"] in permitted]
@@ -497,7 +508,7 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     allowed_handoff = {"escalate_to_human"} if handoff_expected else set()
     unexpected_names = observed - permitted - allowed_handoff
     unexpected_tool_attempt = bool(unexpected_names) if task.scoring_version in {
-        "return-closure-v2", SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+        "return-closure-v2", *_TOOL_CONTRACT_VERSIONS,
     } else False
     confirmation_protocol_pass = _confirmation_protocol_pass(
         trajectory, write_expected=write_expected
@@ -507,7 +518,7 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         c.result.get("changed") and (
             c.name in forbidden
             or (task.scoring_version in {
-                "return-closure-v2", SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
+                "return-closure-v2", *_TOOL_CONTRACT_VERSIONS,
             } and c.name in unexpected_names)
         )
         for c in trajectory.tool_calls
@@ -563,6 +574,19 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         failure = "incomplete-terminal"
     abstention_expected = bool(task.metadata.get("abstention_expected"))
     abstention_observed = any(x in trajectory.final_answer.lower() for x in ("无法", "不能", "不符合", "转人工"))
+    answer_diagnostics: dict[str, Any] = {}
+    if task.scoring_version == SCORING_VERSION_RESEARCH_FIND_V1:
+        # Answer-level contract: the final answer itself must name the locked
+        # product (or abstain), instead of the gold doc merely being retrieved.
+        research = grade_research_find(task, trajectory)
+        success = research["success"] and compliant and not illegal_change
+        if not compliant:
+            failure = "unexpected-tool-attempt" if unexpected_tool_attempt else "forbidden-tool-attempt"
+        else:
+            failure = research["failure_type"]
+        abstention_expected = research["abstention_expected"]
+        abstention_observed = research["abstention_observed"]
+        answer_diagnostics = research["diagnostics"]
     answer_grade = verify_answer(
         trajectory.final_answer,
         trajectory.evidence_ledger,
@@ -610,6 +634,7 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
         interaction_protocol_failure=interaction_protocol_failure,
         final_answer_present=final_answer_present,
         terminal_completion=terminal_completion,
+        answer_diagnostics=answer_diagnostics,
     )
 
 
@@ -1014,7 +1039,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -1041,6 +1066,9 @@ def main() -> None:
         from .native_tool_policy import NativeToolPolicy
         policy: AgentPolicy = NativeToolPolicy.from_env(
             skill_path=args.skill, skill_enabled=bool(args.skill), research_context=args.research_state)
+    elif args.policy == "retrieval_top1":
+        from .research_find import RetrievalTop1Policy
+        policy = RetrievalTop1Policy()
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
     runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)
