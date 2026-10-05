@@ -87,6 +87,8 @@ answer contract 都必须显式开启。服务缺失或无 GPU 记为 `not_execu
   配对实验必须固定 manifest、embedding hash 和 backend。
 - transaction audit：使用 `docs/transaction_contracts.md` 的 model-free 命令；审计
   不调用 LLM、不下载权重、不启动模型服务。
+- research-find-v1：语料、类目旁路、任务生成、索引和三组运行的输入与产物见
+  `docs/research_find.md`；无卡 AutoDL 实例（2 GiB/0.5 核）建 5k 索引会被 OOM kill。
 - ResearchState/复杂咨询：使用 `docs/complex_research.md` 和
   `docs/experiments/README.md` 的实验记录；不要把其 CPU fixture 当模型结果。
 

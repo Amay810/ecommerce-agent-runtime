@@ -35,6 +35,13 @@ selective tools、evidence-answer-v1、retrieval experience 都是隔离实验�
 恢复时先使用完整 tracked diff 和未跟踪源归档，再按各实验 manifest 的代码、任务、配置、
 评分版本和产物路径逐项重建。
 
+## research-find-v1（Executed，exploration only）
+
+代码 `a380b90`（反事实分析 `c47247c`），AutoDL RTX 4090，产物在
+`/root/autodl-tmp/experiments/research_find_v1_20261005/`。Oracle 200/200 为接线检查；
+确定性检索基线 25.5%；Native Qwen3-4B exploration 36%，配对 +6pp（CI [−7, +19]）。
+产物哈希、执行类别和失败归因见 [research_find](../research_find.md)。locked 未运行。
+
 ## 外部机制背景（非依赖）
 
 - Open Deep Research 的参考点是“工具结果回到状态，再决定是否继续研究”；本项目只

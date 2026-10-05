@@ -24,6 +24,7 @@
 | `ecommerce_rag.harness run --policy rule` | 推荐 CPU contract smoke；结果不代表模型。CLI 的 policy 默认值仍按代码为 `oracle`，文档命令显式选择 `rule`。 |
 | `--policy native` / `NativeToolPolicy` | AutoDL 本地 Qwen tool-call 路径；真实效果仍需按固定配置单独记录。 |
 | `mcp_server.py` | 可选 MCP façade；业务 dispatch 仍汇合到 `RetailTools.call`。 |
+| `--policy retrieval_top1` | `research-find-v1` 的确定性单次检索基线；不是模型结果。 |
 | `ResearchState` / `run_research_trial.py` | 可选补证实验路径，默认不注入主 Native。 |
 | Tau3 adapter / `nscc/` | 外部运行环境适配，不属于本机 CPU smoke。 |
 
@@ -37,6 +38,10 @@
 - retrieval experience 候选状态为 rejected，默认关闭。
 - RulePolicy 的 ResearchState/CPU fixture 只验证接线、证据投影和 fail-closed 行为，
   不提供模型收益结论。
+- `research-find-v1`（`a380b90`，AutoDL）：200 题答案级找商品任务；确定性检索基线
+  25.5%，Native Qwen3-4B 在 exploration 上 36%，与基线配对 +6pp（CI [−7, +19]），
+  未显著；主要失败是模型改写查询后召回下降并误拒答。locked 未运行，详见
+  [research_find](research_find.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。
