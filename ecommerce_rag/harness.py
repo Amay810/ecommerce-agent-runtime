@@ -34,6 +34,8 @@ from .action_constraint import apply_action_constraint
 from .legacy_closure import LegacyTaskProgressReducer, TaskProgress
 from .research_state import RESEARCH_TOOLS, budget_exhausted_answer, derive_research_state
 from .research_find import grade_research_find
+from .argument_grounding import ground_search_filters
+from .query_fusion import ContextFusionRetriever
 
 # Opt-in contracts where allowed_tools is the offered action space and
 # required_tools is the separately declared required subset.
@@ -646,7 +648,9 @@ class HarnessRunner:
                  enforce_action_constraint: bool = False,
                  user_simulator_factory: Any | None = None,
                  research_enabled: bool = False,
-                 research_budget: int | None = None):
+                 research_budget: int | None = None,
+                 ground_search_filters: bool = False,
+                 search_query_fusion: bool = False):
         self.db_path, self.retriever = Path(db_path), retriever
         self.policy, self.max_steps = policy or OraclePolicy(), max_steps
         if expose_task_progress and progress_reducer is None:
@@ -659,6 +663,9 @@ class HarnessRunner:
         self.user_simulator_factory = user_simulator_factory or UserSimulator
         self.research_enabled = research_enabled
         self.research_budget = research_budget
+        # Opt-in search runtime experiments; both are off on the stable path.
+        self.ground_search_filters = ground_search_filters
+        self.search_query_fusion = search_query_fusion
     def _reset(self, task: TaskSpec) -> None:
         if not task.initial_state: return
         conn = connect(self.db_path)
@@ -686,7 +693,9 @@ class HarnessRunner:
             self.research_budget if self.research_budget is not None else task.research_budget
         )
         session_id = f"session_{task.task_id}_{task.seed}_{uuid.uuid4().hex[:8]}"
-        tools = RetailTools(self.db_path, self.retriever)
+        fusion = (ContextFusionRetriever(self.retriever)
+                  if self.search_query_fusion and self.retriever is not None else None)
+        tools = RetailTools(self.db_path, fusion or self.retriever)
         simulator = self.user_simulator_factory(task)
         bind = getattr(self.policy, "bind", None)
         if callable(bind):
@@ -853,12 +862,27 @@ class HarnessRunner:
                         messages.append({"role": "assistant", "content": answer})
                         break
                     research_calls += 1
+                call_arguments = action.arguments
+                search_notes: dict[str, Any] = {}
+                if action.tool_name == "search_catalog":
+                    user_texts = [str(x.get("content", "")) for x in history if x.get("role") == "user"]
+                    if self.ground_search_filters:
+                        call_arguments, grounding = ground_search_filters(call_arguments, user_texts)
+                        if grounding:
+                            search_notes["argument_grounding"] = grounding
+                    if fusion is not None:
+                        fusion.context_query = user_texts[-1] if user_texts else None
                 result = tools.call(
                     action.tool_name or "",
                     _session_id=session_id,
                     _confirmation_id=confirmation_id,
-                    **action.arguments,
+                    **call_arguments,
                 )
+                if fusion is not None and action.tool_name == "search_catalog":
+                    search_notes["query_fusion"] = copy.deepcopy(fusion.last_fusion)
+                    fusion.context_query = None
+                # The recorded ToolCall shares this dict, so notes reach the trace too.
+                result.update(search_notes)
                 history.append({"role": "tool", "name": action.tool_name, "content": json.dumps(result, ensure_ascii=False), "result": result})
                 call = tools.calls[-1]
                 converted, conversion_span = convert_tool_call_to_evidence(
@@ -1039,7 +1063,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task"); run.add_argument("--ground-search-filters", action="store_true", help="Drop search filters the user never stated"); run.add_argument("--search-query-fusion", action="store_true", help="Fuse each search with the latest user message")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -1070,13 +1094,13 @@ def main() -> None:
         from .research_find import RetrievalTop1Policy
         policy = RetrievalTop1Policy()
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
-    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget),TrajectoryStore(args.store); results=[]; details=[]
+    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget,ground_search_filters=args.ground_search_filters,search_query_fusion=args.search_query_fusion),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)
     if args.split: tasks=[task for task in tasks if task.split==args.split]
     for task in tasks:
         for repeat in range(args.repeats):
             repeated=TaskSpec(**{**asdict(task),"seed":task.seed+repeat}); trajectory,result=runner.run(repeated); store.save(trajectory,result); results.append(result); details.append({"trajectory_id":trajectory.trajectory_id,**result.to_dict()})
-    report={"policy":args.policy,"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
+    report={"policy":args.policy,"configuration":{"ground_search_filters":args.ground_search_filters,"search_query_fusion":args.search_query_fusion},"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
 
 
 if __name__=="__main__": main()
