@@ -1,0 +1,34 @@
+{
+  "generator_version": "research-write-generator-v1",
+  "scoring_version": "research-write-v1",
+  "seed": 20261008,
+  "db_seed": 20260720,
+  "per_type_split": 15,
+  "tasks": 90,
+  "counts": {
+    "modify_pending/exploration": 15,
+    "modify_pending/locked": 15,
+    "exchange_delivered/exploration": 15,
+    "exchange_delivered/locked": 15,
+    "no_target/exploration": 15,
+    "no_target/locked": 15
+  },
+  "inputs": {
+    "products": {
+      "path": "ecommerce_rag/data/amazon_products_5k.jsonl",
+      "sha256": "4d5e175c67374bc8ebf1e92a0c3ea1f95205103ee4998d3d5f3678fad62a5f76"
+    },
+    "category_paths": {
+      "path": "ecommerce_rag/data/amazon_products_5k.category_paths.jsonl",
+      "sha256": "a21b43aa5be90b927b49493389cb1b2bbab5c7ff1d7ab2a3bcaaf2fac0e97764"
+    }
+  },
+  "output_sha256": "bb0f7c69ed41e0b593da0d6bd8cae1e67e73c89c002f95ab1d44d58b903ac726",
+  "rules": [
+    "orders come from seed_database(db_seed); each order is used once",
+    "write targets are same-brand, same-type siblings, minimal-unique and observable",
+    "the ordered product does not satisfy the requested attribute",
+    "no_target: no product could satisfy the constraints; the order must stay unchanged",
+    "expected_state is the full scored order row; splits by (leaf, brand) group of the ordered product"
+  ]
+}

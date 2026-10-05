@@ -18,6 +18,7 @@ from .domain import (
     SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT,
     SCORING_VERSION_HARNESS_V2_TERMINAL,
     SCORING_VERSION_RESEARCH_FIND_V1,
+    SCORING_VERSION_RESEARCH_WRITE_V1,
     AgentAction,
     AgentObservation,
     GradeResult,
@@ -28,18 +29,28 @@ from .domain import (
 from .confirmation import confirmation_decision
 from .evidence import convert_tool_call_to_evidence, verify_answer
 from .orders import connect, seed_database, snapshot
-from .tool_schema import TOOL_SCHEMAS
+from .tool_schema import TOOL_SCHEMAS, validate_arguments
 from .tools import RetailTools, WRITE_TOOLS
 from .action_constraint import apply_action_constraint
 from .legacy_closure import LegacyTaskProgressReducer, TaskProgress
 from .research_state import RESEARCH_TOOLS, budget_exhausted_answer, derive_research_state
 from .research_find import grade_research_find
+from .research_write import grade_research_write
 from .argument_grounding import ground_search_filters
 from .query_fusion import ContextFusionRetriever
 
 # Opt-in contracts where allowed_tools is the offered action space and
 # required_tools is the separately declared required subset.
-_TOOL_CONTRACT_VERSIONS = {SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT, SCORING_VERSION_RESEARCH_FIND_V1}
+_TOOL_CONTRACT_VERSIONS = {
+    SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT, SCORING_VERSION_RESEARCH_FIND_V1, SCORING_VERSION_RESEARCH_WRITE_V1,
+}
+
+
+def runtime_write_summary(name: str, arguments: dict[str, Any]) -> str:
+    """Canonical text the trusted layer shows the user for one exact write."""
+    parts = [f"{key}={json.dumps(arguments[key], ensure_ascii=False)}"
+             for key in sorted(arguments) if key not in {"confirmed", "verification_code"}]
+    return f"系统确认：即将执行 {name}（" + "，".join(parts) + "）。是否确认执行？"
 
 class AgentPolicy(Protocol):
     def act(self, observation: AgentObservation) -> AgentAction: ...
@@ -84,6 +95,17 @@ class OraclePolicy:
         called = [x.get("name") for x in _tool_events(observation)]
         if task.category == "product_qa":
             return AgentAction.tool_call("search_catalog", query=task.user_goal, top_k=5) if not called else AgentAction.answer("已根据商品资料回答。")
+        if task.category == "research_write":
+            contract = task.evaluation_contract
+            target = contract.get("target_product_id")
+            if not target:
+                return AgentAction.answer("商品库中没有明确满足全部条件的商品，订单未修改。")
+            if contract["write_tool"] not in called:
+                return AgentAction.tool_call(
+                    contract["write_tool"], order_id=md["order_id"], user_id=task.user_id,
+                    verification_code=md["verification_code"], item_ids=[contract["current_product_id"]],
+                    new_item_ids=[target], payment_method_id=contract["payment_method_id"], confirmed=True)
+            return AgentAction.answer("订单已按确认修改。")
         if task.category == "research_find":
             answer_id = task.evaluation_contract.get("answer_product_id")
             if not answer_id:
@@ -268,7 +290,9 @@ class UserSimulator:
             mode = behavior.get("confirmation", self.task.metadata.get("confirmed", False))
             if mode == "change_goal":
                 return "先不退了，改为只查询订单状态。"
-            return "确认提交退货" if mode is True else "不确认，请不要修改订单。"
+            if mode is True:
+                return behavior.get("confirm_text", "确认提交退货")
+            return behavior.get("decline_text", "不确认，请不要修改订单。")
         if requested_input_type == "order_id":
             return self.task.metadata.get("order_id")
         if requested_input_type == "return_reason":
@@ -283,7 +307,9 @@ class UserSimulator:
             mode = behavior.get("confirmation", self.task.metadata.get("confirmed", False))
             if mode == "change_goal":
                 return "先不退了，改为只查询订单状态。"
-            return "确认提交退货" if mode is True else "不确认，请不要修改订单。"
+            if mode is True:
+                return behavior.get("confirm_text", "确认提交退货")
+            return behavior.get("decline_text", "不确认，请不要修改订单。")
         if "订单号" in request:
             return self.task.metadata.get("order_id")
         return None
@@ -577,7 +603,16 @@ def grade(task: TaskSpec, trajectory: Trajectory, *, leakage_checked: bool = Fal
     abstention_expected = bool(task.metadata.get("abstention_expected"))
     abstention_observed = any(x in trajectory.final_answer.lower() for x in ("无法", "不能", "不符合", "转人工"))
     answer_diagnostics: dict[str, Any] = {}
-    if task.scoring_version == SCORING_VERSION_RESEARCH_FIND_V1:
+    if task.scoring_version == SCORING_VERSION_RESEARCH_WRITE_V1:
+        # State-level contract: the right order write, or no write at all.
+        research = grade_research_write(task, trajectory, state_ok=state_ok)
+        success = research["success"] and compliant and not illegal_change
+        if not compliant:
+            failure = "unexpected-tool-attempt" if unexpected_tool_attempt else "forbidden-tool-attempt"
+        else:
+            failure = research["failure_type"]
+        answer_diagnostics = research["diagnostics"]
+    elif task.scoring_version == SCORING_VERSION_RESEARCH_FIND_V1:
         # Answer-level contract: the final answer itself must name the locked
         # product (or abstain), instead of the gold doc merely being retrieved.
         research = grade_research_find(task, trajectory)
@@ -651,7 +686,8 @@ class HarnessRunner:
                  research_budget: int | None = None,
                  ground_search_filters: bool = False,
                  search_query_fusion: bool = False,
-                 search_result_attributes: bool = False):
+                 search_result_attributes: bool = False,
+                 runtime_write_approval: bool = False):
         self.db_path, self.retriever = Path(db_path), retriever
         self.policy, self.max_steps = policy or OraclePolicy(), max_steps
         if expose_task_progress and progress_reducer is None:
@@ -668,6 +704,9 @@ class HarnessRunner:
         self.ground_search_filters = ground_search_filters
         self.search_query_fusion = search_query_fusion
         self.search_result_attributes = search_result_attributes
+        # Opt-in: an unauthorized write is held while the trusted layer asks the
+        # user to approve that exact call; off on the stable path.
+        self.runtime_write_approval = runtime_write_approval
     def _reset(self, task: TaskSpec) -> None:
         if not task.initial_state: return
         conn = connect(self.db_path)
@@ -739,6 +778,52 @@ class HarnessRunner:
                 call_record["llm"] = trace
             model_calls.append(call_record)
             return decided, retries_used, trace
+
+        def request_runtime_approval(step: int, name: str,
+                                     arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+            """Ask the user, through the trusted layer, to approve one exact write.
+
+            Returns the arguments to execute, the authorization id, and whether
+            the write must be withheld. Invalid or unverifiable calls are not
+            put to the user; the tool reports their error itself.
+            """
+            bound = {**arguments, "confirmed": True}
+            try:
+                validate_arguments(name, bound)
+            except Exception:
+                return arguments, None, False
+            if "order_id" in bound:
+                _, identity_error = tools._verified_order(
+                    bound.get("order_id"), bound.get("user_id"), bound.get("verification_code"))
+                if identity_error:
+                    return arguments, None, False
+            summary = runtime_write_summary(name, bound)
+            request_id = tools.issue_confirmation(
+                session_id=session_id, user_id=task.user_id, operation=name,
+                arguments=bound, request_text=summary)
+            confirmation_spans.append({
+                "step": step, "event": "request_issued", "request_id": request_id, "operation": name,
+                "parameter_hash": tools.confirmation_ledger.records[request_id].parameter_hash,
+                "runtime_mediated": True,
+            })
+            request = AgentAction.answer(summary, requires_user_response=True, requested_input_type="confirmation")
+            try:
+                response = simulator.respond(request, "confirmation")
+            except UserSimulatorProtocolError:
+                response = None
+            sim_spans.append({"step": step, "request": summary, "requested_input_type": "confirmation",
+                              "response": response, "runtime_mediated": True})
+            messages.append({"role": "assistant", "content": summary})
+            if response is not None:
+                messages.append({"role": "user", "content": response})
+            decision = tools.record_user_confirmation(session_id=session_id, response_text=response or "")
+            confirmation_spans.append({"step": step, "event": "user_response", "response": response,
+                                       **decision, "runtime_mediated": True})
+            if decision.get("decision") is not True:
+                return bound, None, True
+            authorized = tools.authorization_for(
+                session_id=session_id, user_id=task.user_id, operation=name, arguments=bound)
+            return bound, authorized, authorized is None
 
         for step in range(self.max_steps):
             derived_research_state = derive_research_state(
@@ -866,6 +951,20 @@ class HarnessRunner:
                         break
                     research_calls += 1
                 call_arguments = action.arguments
+                if (self.runtime_write_approval and not confirmation_id
+                        and action.tool_name in WRITE_TOOLS and action.tool_name != "escalate_to_human"):
+                    call_arguments, confirmation_id, withheld = request_runtime_approval(
+                        step, action.tool_name or "", action.arguments)
+                    if withheld:
+                        result = {"ok": False, "changed": False, "error": "user_declined_write",
+                                  "operation": action.tool_name}
+                        tools.calls.append(ToolCall(
+                            action.tool_name or "", copy.deepcopy(call_arguments),
+                            f"approval_{step}_{uuid.uuid4().hex[:8]}", result,
+                            "runtime_approval_declined", error="user_declined_write"))
+                        history.append({"role": "tool", "name": action.tool_name,
+                                        "content": json.dumps(result, ensure_ascii=False), "result": result})
+                        continue
                 search_notes: dict[str, Any] = {}
                 if action.tool_name == "search_catalog":
                     user_texts = [str(x.get("content", "")) for x in history if x.get("role") == "user"]
@@ -1066,7 +1165,7 @@ def load_tasks(path: Path | str) -> list[TaskSpec]:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Leakage-resistant retail agent harness"); sub=parser.add_subparsers(dest="command",required=True)
-    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task"); run.add_argument("--ground-search-filters", action="store_true", help="Drop search filters the user never stated"); run.add_argument("--search-query-fusion", action="store_true", help="Fuse each search with the latest user message"); run.add_argument("--search-result-attributes", action="store_true", help="Show product attributes in search and get_product results")
+    run=sub.add_parser("run"); run.add_argument("--tasks",required=True); run.add_argument("--db",required=True); run.add_argument("--store",required=True); run.add_argument("--repeats",type=int,default=3); run.add_argument("--output",required=True); run.add_argument("--seed-db",action="store_true"); run.add_argument("--index"); run.add_argument("--policy",choices=("oracle","rule","native","retrieval_top1"),default="oracle"); run.add_argument("--split",choices=("calibration","dev","exploration","validation","locked","smoke")); run.add_argument("--skill", help="Enable an explicit Skill file for the native policy"); run.add_argument("--research-state", action="store_true", help="Expose derived evidence state to an evidence-aware policy"); run.add_argument("--research-budget", type=int, help="Maximum read-only research calls per task"); run.add_argument("--ground-search-filters", action="store_true", help="Drop search filters the user never stated"); run.add_argument("--search-query-fusion", action="store_true", help="Fuse each search with the latest user message"); run.add_argument("--search-result-attributes", action="store_true", help="Show product attributes in search and get_product results"); run.add_argument("--runtime-write-approval", action="store_true", help="Hold unauthorized writes for trusted user approval of the exact call")
     replay=sub.add_parser("replay"); replay.add_argument("--store",required=True); replay.add_argument("--trajectory-id",required=True); replay.add_argument("--tasks"); replay.add_argument("--db"); replay.add_argument("--output"); replay.add_argument("--index"); replay.add_argument("--policy",choices=("oracle","rule"),default="oracle")
     compare=sub.add_parser("compare"); compare.add_argument("reports",nargs="+"); args=parser.parse_args()
     if args.command=="compare":
@@ -1097,13 +1196,13 @@ def main() -> None:
         from .research_find import RetrievalTop1Policy
         policy = RetrievalTop1Policy()
     else: policy=OraclePolicy() if args.policy=="oracle" else RulePolicy()
-    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget,ground_search_filters=args.ground_search_filters,search_query_fusion=args.search_query_fusion,search_result_attributes=args.search_result_attributes),TrajectoryStore(args.store); results=[]; details=[]
+    runner,store=HarnessRunner(args.db,retriever,policy,research_enabled=args.research_state,research_budget=args.research_budget,ground_search_filters=args.ground_search_filters,search_query_fusion=args.search_query_fusion,search_result_attributes=args.search_result_attributes,runtime_write_approval=args.runtime_write_approval),TrajectoryStore(args.store); results=[]; details=[]
     tasks=load_tasks(args.tasks)
     if args.split: tasks=[task for task in tasks if task.split==args.split]
     for task in tasks:
         for repeat in range(args.repeats):
             repeated=TaskSpec(**{**asdict(task),"seed":task.seed+repeat}); trajectory,result=runner.run(repeated); store.save(trajectory,result); results.append(result); details.append({"trajectory_id":trajectory.trajectory_id,**result.to_dict()})
-    report={"policy":args.policy,"configuration":{"ground_search_filters":args.ground_search_filters,"search_query_fusion":args.search_query_fusion,"search_result_attributes":args.search_result_attributes},"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
+    report={"policy":args.policy,"configuration":{"ground_search_filters":args.ground_search_filters,"search_query_fusion":args.search_query_fusion,"search_result_attributes":args.search_result_attributes,"runtime_write_approval":args.runtime_write_approval},"summary":summarize(results,args.repeats),"details":details}; Path(args.output).parent.mkdir(parents=True,exist_ok=True); Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(report["summary"],ensure_ascii=False,indent=2))
 
 
 if __name__=="__main__": main()

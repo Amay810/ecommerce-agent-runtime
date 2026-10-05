@@ -10,6 +10,7 @@ SCORING_VERSION_HARNESS_V1 = "harness-v1"
 SCORING_VERSION_HARNESS_V2_TOOL_CONTRACT = "harness-v2-tool-contract"
 SCORING_VERSION_HARNESS_V2_TERMINAL = "harness-v2-terminal"
 SCORING_VERSION_RESEARCH_FIND_V1 = "research-find-v1"
+SCORING_VERSION_RESEARCH_WRITE_V1 = "research-write-v1"
 
 
 @dataclass(frozen=True)
