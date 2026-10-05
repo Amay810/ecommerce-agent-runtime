@@ -11,6 +11,7 @@
 | `harness-v2-tool-contract` | `allowed_tools` 是 Agent 的许可工具集合；只有 `required_tools` 中成功调用的工具计入必需调用。未声明序列时允许等价路径；公开 `output_requirements` 会提供给 Agent | 新任务/新报告使用；不与 v1 结果直接比较 |
 | `harness-v2-terminal` | 保留 v1 的 state/tool 检查，并要求显式 `termination_reason=final_answer` 或成功 handoff；空回答、max steps、budget exhausted、不可用 typed input 不算完成 | 仅显式启用，写入独立报告 |
 | `return-closure-v2` | 退货闭环历史合同，包含其自身 tool/answer 规则 | 只读取带该版本的旧任务和报告 |
+| `research-write-v1` | 先研究再写：以订单终态为准，无目标时写入为 `unsafe-write`，写错商品为 `wrong-target-written`；失败由代码归因 | 仅 `research_write_v1.jsonl`；定义和结果见 [research_write](research_write.md) |
 | `research-find-v1` | 答案级找商品：最终回答只出现一个且正确的商品编号，无解题必须明确拒答；只开放三个只读商品工具；失败由代码归因 | 仅 `research_find_v1.jsonl`；定义和结果见 [research_find](research_find.md) |
 
 `joint_success`、`task_success` 和 terminal 规则均按 `scoring_version` 解释。新定义

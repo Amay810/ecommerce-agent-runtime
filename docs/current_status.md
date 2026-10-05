@@ -48,6 +48,11 @@
   29%。第三轮改为模型在环挖掘；`670652c` 增加默认关闭的 `--search-result-attributes`
   并修复其被上下文压缩丢弃的问题。r2 locked 一次性评估：34/98 → 49/98（溯源+融合）
   → 58/98（加属性视图），无解题仍低于开关全关。详见 [research_find](research_find.md)。
+- `research-write-v1`（L4，`f6567c1`–`6e45ce4`）：先研究再改单/换货，默认关闭的
+  `--runtime-write-approval` 由可信层逐次审批写调用。Oracle 45/45；Qwen3-4B 在
+  exploration 上几乎不执行最后一步写操作（全开 2/30 次写入）。修复了订单视图被压缩掉
+  写工具必需字段的缺陷（改变 Native 的 `get_order` 输入）。locked 未运行，详见
+  [research_write](research_write.md)。
 
 实验路径、配置、原始产物和哈希见 [实验索引](experiments/README.md)；不要把共享
 dirty diff 拆写成可独立运行的实验 patch。
