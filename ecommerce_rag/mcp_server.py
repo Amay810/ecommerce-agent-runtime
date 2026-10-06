@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-from .tools import RetailTools
+from .tools import WRITE_TOOLS, RetailTools
 
 
 MCP_TOOL_NAMES = (
@@ -47,7 +47,23 @@ class MCPRetailFacade:
     def _user_call(self, name: str, **arguments: Any) -> dict[str, Any]:
         if not self.user_id:
             return {"ok": False, "changed": False, "error": "mcp_user_not_configured"}
-        return self.tools.call(name, _session_id=self.session_id, user_id=self.user_id, **arguments)
+        confirmation_id = None
+        if name in WRITE_TOOLS and name != "escalate_to_human":
+            # Only a record created through the trusted host callbacks below can
+            # authorize a write; MCP clients can neither see nor supply this id.
+            confirmation_id = self.tools.authorization_for(
+                session_id=self.session_id,
+                user_id=self.user_id,
+                operation=name,
+                arguments={**arguments, "user_id": self.user_id},
+            )
+        return self.tools.call(
+            name,
+            _session_id=self.session_id,
+            _confirmation_id=confirmation_id,
+            user_id=self.user_id,
+            **arguments,
+        )
 
     def issue_confirmation(self, operation: str, arguments: dict[str, Any], request_text: str) -> str:
         """Trusted host callback used before presenting a confirmation prompt."""

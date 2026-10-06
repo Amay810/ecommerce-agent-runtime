@@ -99,6 +99,41 @@ def test_mcp_confirmation_callback_cannot_override_server_identity():
         assert record.parameters["user_id"] == account["user_id"]
 
 
+def test_mcp_write_commits_only_with_host_issued_confirmation():
+    with tempfile.TemporaryDirectory() as directory:
+        db = Path(directory) / "retail.db"
+        seed_database(db, users=20, orders=100)
+        conn = connect(db)
+        try:
+            order = dict(conn.execute(
+                "SELECT * FROM orders WHERE status='delivered' AND quality_issue=1 LIMIT 1"
+            ).fetchone())
+            code = conn.execute(
+                "SELECT verification_code FROM users WHERE user_id=?", (order["user_id"],)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        facade = MCPRetailFacade(RetailTools(db), order["user_id"], session_id="mcp-write")
+
+        unconfirmed = facade.create_return_request(order["order_id"], code, confirmed=True)
+        assert unconfirmed["error"] == "confirmation_required"
+
+        facade.issue_confirmation(
+            "create_return_request",
+            {"order_id": order["order_id"], "verification_code": code, "confirmed": True},
+            "确认提交退货？",
+        )
+        assert facade.record_user_confirmation("确认提交退货")["decision"] is True
+        other_session = MCPRetailFacade(facade.tools, order["user_id"], session_id="mcp-other")
+        assert other_session.create_return_request(
+            order["order_id"], code, confirmed=True
+        )["error"] == "confirmation_required"
+
+        result = facade.create_return_request(order["order_id"], code, confirmed=True)
+        assert result["ok"] is True
+        assert result["changed"] is True
+
+
 def test_mcp_surface_matches_retail_tools_registry():
     assert set(MCP_TOOL_NAMES) == set(RetailTools(":memory:").executable_tool_names())
 
