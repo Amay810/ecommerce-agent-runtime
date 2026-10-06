@@ -50,6 +50,11 @@ dirty diff 拆写成可独立运行的实验 patch。
   SQLite/JSON/log。现有同名 tracked JSON 是历史汇总，二者分开记录。
 - 消息来源修复、stale confirmation audit 修复和 Native 角色合同已有 CPU 覆盖；
   真实 Qwen 对行为的影响、跨进程 ledger、崩溃恢复和并发窗口仍未验证。
+- 09fc5bd 的 Direct/MCP 差分结论已被干净 revision `ff0f8a2` 的 CPU 审计取代，
+  旧产物保持不动。原因是那次差分没有签发可信确认，18 行写入在两侧同时停在确认门。
+  MCP 确认写入目前只对进程内可信 host 有效，独立 server 仍然没有确认入口。详见
+  [transaction contracts](transaction_contracts.md) 和
+  [tools and safety](tools_and_safety.md#mcp-write-scope)。
 - 凭据、模型、缓存、SQLite 日志、原始轨迹和图谱生成物不进入仓库。
 
 ## 文档入口
