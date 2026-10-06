@@ -723,6 +723,45 @@ class UnsafeRetailTools:
             conn.close()
 
 
+TRUSTED_CONFIRMATION_RESPONSE = "确认执行"
+
+
+def _needs_trusted_confirmation(action: CanonicalAction) -> bool:
+    """Confirmed writes get a host-issued record; ``confirmed=False`` stays bare."""
+
+    return action.tool in CONFIRMATION_TOOLS and action.args.get("confirmed") is True
+
+
+def _trusted_authorization(
+    runtime: RetailTools,
+    *,
+    session_id: str,
+    operation: str,
+    arguments: dict[str, Any],
+    request_text: str,
+) -> str | None:
+    """Play the trusted host: issue, accept, and resolve one bound confirmation."""
+
+    user_id = str(arguments.get("user_id") or "")
+    runtime.issue_confirmation(
+        session_id=session_id,
+        user_id=user_id,
+        operation=operation,
+        arguments=arguments,
+        request_text=request_text,
+    )
+    runtime.record_user_confirmation(
+        session_id=session_id,
+        response_text=TRUSTED_CONFIRMATION_RESPONSE,
+    )
+    return runtime.authorization_for(
+        session_id=session_id,
+        user_id=user_id,
+        operation=operation,
+        arguments=arguments,
+    )
+
+
 class ReplayRunner:
     """Run canonical actions and record per-step state/evidence."""
 
@@ -750,26 +789,15 @@ class ReplayRunner:
                 trusted_confirmation = None
                 if (
                     self.guardrails
-                    and action.tool in CONFIRMATION_TOOLS
-                    and call_args.get("confirmed") is True
+                    and _needs_trusted_confirmation(action)
                     and isinstance(runtime, RetailTools)
                 ):
-                    runtime.issue_confirmation(
+                    trusted_confirmation = _trusted_authorization(
+                        runtime,
                         session_id=trusted_session,
-                        user_id=str(call_args.get("user_id") or ""),
                         operation=action.tool,
                         arguments=call_args,
                         request_text="replay confirmation",
-                    )
-                    runtime.record_user_confirmation(
-                        session_id=trusted_session,
-                        response_text="确认执行",
-                    )
-                    trusted_confirmation = runtime.authorization_for(
-                        session_id=trusted_session,
-                        user_id=str(call_args.get("user_id") or ""),
-                        operation=action.tool,
-                        arguments=call_args,
                     )
                 if mutate_after_confirmation:
                     conn = connect(self.db_path)
@@ -1076,10 +1104,20 @@ def _canonical_mcp_args(args: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in args.items() if key != "user_id"}
 
 
-def _invoke_mcp(db_path: Path | str, action: CanonicalAction) -> dict[str, Any]:
+def _invoke_mcp(
+    db_path: Path | str,
+    action: CanonicalAction,
+    *,
+    session_id: str,
+    confirm: bool,
+) -> dict[str, Any]:
     user_id = str(action.args.get("user_id", ""))
-    facade = MCPRetailFacade(RetailTools(db_path), user_id)
+    facade = MCPRetailFacade(RetailTools(db_path), user_id, session_id=session_id)
     args = _canonical_mcp_args(action.args)
+    if confirm:
+        # Host-side callbacks, not MCP tools: the facade binds its own user_id.
+        facade.issue_confirmation(action.tool, args, "differential confirmation")
+        facade.record_user_confirmation(TRUSTED_CONFIRMATION_RESPONSE)
     method = getattr(facade, action.tool)
     try:
         return method(**args)
@@ -1186,8 +1224,30 @@ def differential_replay(*, seed: int = 20260720) -> dict[str, Any]:
             seed_database(mcp_db, users=40, orders=200, seed=seed)
             direct_before = database_state(direct_db)
             mcp_before = database_state(mcp_db)
-            direct_result = RetailTools(direct_db).call(action.tool, **copy.deepcopy(action.args))
-            mcp_result = _invoke_mcp(mcp_db, action)
+            confirm = _needs_trusted_confirmation(action)
+            direct_session = f"differential-direct-{index}"
+            direct_tools = RetailTools(direct_db)
+            direct_args = copy.deepcopy(action.args)
+            direct_confirmation = (
+                _trusted_authorization(
+                    direct_tools,
+                    session_id=direct_session,
+                    operation=action.tool,
+                    arguments=direct_args,
+                    request_text="differential confirmation",
+                )
+                if confirm
+                else None
+            )
+            direct_result = direct_tools.call(
+                action.tool,
+                _session_id=direct_session,
+                _confirmation_id=direct_confirmation,
+                **direct_args,
+            )
+            mcp_result = _invoke_mcp(
+                mcp_db, action, session_id=f"differential-mcp-{index}", confirm=confirm
+            )
             direct_after = database_state(direct_db)
             mcp_after = database_state(mcp_db)
             direct_obs, mcp_obs = normalize_observation(direct_result), normalize_observation(mcp_result)
@@ -1199,6 +1259,7 @@ def differential_replay(*, seed: int = 20260720) -> dict[str, Any]:
                     "tool": action.tool,
                     "coverage_case": action.metadata.get("coverage_case"),
                     "canonical_args": action.canonical_args(),
+                    "trusted_confirmation_issued": confirm,
                     "direct": {"observation": direct_obs, "state_hash": state_hash(direct_after), "state_diff": state_diff(direct_before, direct_after)},
                     "mcp": {"observation": mcp_obs, "state_hash": state_hash(mcp_after), "state_diff": state_diff(mcp_before, mcp_after)},
                     "state_semantics_equal": state_equal,
@@ -1212,6 +1273,8 @@ def differential_replay(*, seed: int = 20260720) -> dict[str, Any]:
             "tools_tested": len({action.tool for action in actions}),
             "executions": len(actions),
             "coverage_cases": dict(Counter(action.metadata.get("coverage_case", "unspecified") for action in actions)),
+            "confirmation_mode": "trusted host confirmation issued on both surfaces for every confirmed=True write; confirmed=False rows stay unconfirmed",
+            "trusted_confirmation_rows": sum(row["trusted_confirmation_issued"] for row in rows),
             "state_mismatches": sum(not row["state_semantics_equal"] for row in rows),
             "observation_mismatches": sum(not row["observation_semantics_equal"] for row in rows),
             "error_mismatches": sum(not row["error_semantics_equal"] for row in rows),

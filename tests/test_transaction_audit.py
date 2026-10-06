@@ -18,7 +18,7 @@ from ecommerce_rag.diagnostics.transaction_audit import (
     state_diff,
 )
 from ecommerce_rag.orders import connect, seed_database
-from ecommerce_rag.tools import RetailTools
+from ecommerce_rag.tools import WRITE_TOOLS, RetailTools
 
 
 def _account(db: Path, *, status: str = "pending") -> tuple[dict, str]:
@@ -215,6 +215,62 @@ def test_direct_mcp_differential_reports_each_surface_layer():
     assert report["state_mismatches"] == 0
     assert report["observation_mismatches"] == 0
     assert report["error_mismatches"] == 0
+
+
+DIFFERENTIAL_REJECTIONS = {
+    ("terminal_state_rejection", "cancel_pending_order"): "order_not_pending",
+    ("terminal_state_rejection", "modify_pending_order_address"): "order_not_pending",
+    ("terminal_state_rejection", "exchange_delivered_order_items"): "order_not_delivered",
+    ("invalid_item_identity", "modify_pending_order_items"): "item_not_found",
+    ("invalid_item_identity", "return_delivered_order_items"): "item_not_found",
+    ("invalid_item_identity", "exchange_delivered_order_items"): "item_not_found",
+    ("item_cardinality_rejection", "modify_pending_order_items"): "item_length_mismatch",
+    ("item_cardinality_rejection", "exchange_delivered_order_items"): "item_length_mismatch",
+    ("invalid_payment_ownership", "return_delivered_order_items"): "payment_method_not_found",
+}
+
+
+def test_direct_mcp_differential_writes_pass_the_confirmation_gate():
+    report = differential_replay()
+    rows = report["rows"]
+
+    happy = [row for row in rows if row["coverage_case"] == "happy_write"]
+    assert {row["tool"] for row in happy} == set(WRITE_TOOLS)
+    for row in happy:
+        for surface in ("direct", "mcp"):
+            assert row[surface]["observation"]["ok"] is True, (row["tool"], surface)
+            assert row[surface]["state_diff"], (row["tool"], surface)
+        assert row["direct"]["state_diff"] == row["mcp"]["state_diff"]
+        if row["tool"] != "escalate_to_human":
+            assert row["trusted_confirmation_issued"] is True
+            assert row["direct"]["observation"]["changed"] is True
+
+    rejections = {
+        (row["coverage_case"], row["tool"]): row
+        for row in rows
+        if row["coverage_case"] in {case for case, _tool in DIFFERENTIAL_REJECTIONS}
+    }
+    assert set(rejections) == set(DIFFERENTIAL_REJECTIONS)
+    for key, expected_error in DIFFERENTIAL_REJECTIONS.items():
+        row = rejections[key]
+        assert row["trusted_confirmation_issued"] is True
+        for surface in ("direct", "mcp"):
+            assert row[surface]["observation"]["error"] == expected_error, (key, surface)
+            assert row[surface]["state_diff"] == {}, (key, surface)
+
+    noop = next(row for row in rows if row["coverage_case"] == "idempotent_noop")
+    for surface in ("direct", "mcp"):
+        assert noop[surface]["observation"]["ok"] is True
+        assert noop[surface]["observation"]["changed"] is False
+        assert noop[surface]["state_diff"] == {}
+
+    missing = [row for row in rows if row["coverage_case"] == "missing_confirmation"]
+    assert len(missing) == 6
+    for row in missing:
+        assert row["trusted_confirmation_issued"] is False
+        for surface in ("direct", "mcp"):
+            assert row[surface]["observation"]["error"] == "confirmation_required"
+            assert row[surface]["state_diff"] == {}
 
 
 def test_failure_semantics_reconciles_historical_denominators():
