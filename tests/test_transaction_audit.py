@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ecommerce_rag.diagnostics.transaction_audit import (
+    ADVERSARIAL_FAMILIES,
     CanonicalAction,
     ReplayRunner,
     artifact_capability_audit,
@@ -161,6 +162,35 @@ def test_adversarial_suite_is_deterministic_and_has_required_volume():
     assert report["known_unresolved_gap"]["status"] == "RESOLVED"
     assert report["known_unresolved_gap"]["on_state_commits_without_binding"] == 0
     assert report["known_unresolved_gap"]["off_state_commits_without_binding"] == 2
+
+
+def test_adversarial_suite_mcp_leg_blocks_like_direct_and_stays_separate():
+    report = run_adversarial_suite(repetitions=1)
+    assert set(report["on"]) == set(report["off"]) == {"attempts", "blocked", "committed"}
+
+    mcp = report["mcp_on"]
+    assert set(mcp["by_family"]) == set(ADVERSARIAL_FAMILIES)
+    assert mcp["executions"] == report["executions"]
+    assert mcp["attempts"] == report["on"]["attempts"]
+    assert mcp["blocked"] == mcp["attempts"]
+    assert mcp["committed"] == 0
+    assert mcp["stale_confirmation"]["state_commits_without_binding"] == 0
+    assert mcp["vs_direct_on"]["post_state_mismatches"] == 0
+    # Known until authorization lookup is unified: Direct reports
+    # confirmation_stale, the facade confirmation_required.
+    assert set(mcp["vs_direct_on"]["error_mismatches_by_family"]) <= {"stale_confirmation"}
+
+    # Valid setup steps must commit through MCP, so the blocks above are not
+    # just a confirmation gate rejecting everything.
+    setups = [
+        row for row in report["cases"]
+        if row["family"] in {"duplicate_mutation", "replay_identical_mutation"} and row["step_idx"] == 0
+    ]
+    assert setups
+    for row in setups:
+        assert row["mcp_on"]["execution_path"] == "mcp_guarded"
+        assert row["mcp_on"]["observation"]["changed"] is True
+        assert row["mcp_on"]["dispatch_state_diff"] == row["on"]["dispatch_state_diff"] != {}
 
 
 def test_stale_audit_uses_sqlite_diff_when_observation_lies(monkeypatch):

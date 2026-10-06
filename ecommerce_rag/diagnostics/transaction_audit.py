@@ -765,10 +765,24 @@ def _trusted_authorization(
 class ReplayRunner:
     """Run canonical actions and record per-step state/evidence."""
 
-    def __init__(self, db_path: Path | str, *, guardrails: bool = True, execution_path: str | None = None):
+    def __init__(
+        self,
+        db_path: Path | str,
+        *,
+        guardrails: bool = True,
+        execution_path: str | None = None,
+        surface: str = "direct",
+    ):
+        if surface not in {"direct", "mcp"}:
+            raise ValueError(f"unknown replay surface: {surface}")
+        if surface == "mcp" and not guardrails:
+            raise ValueError("the MCP surface has no unguarded counterfactual")
         self.db_path = Path(db_path)
         self.guardrails = guardrails
-        self.execution_path = execution_path or ("direct_guarded" if guardrails else "direct_guard_off")
+        self.surface = surface
+        self.execution_path = execution_path or (
+            "mcp_guarded" if surface == "mcp" else "direct_guarded" if guardrails else "direct_guard_off"
+        )
 
     def run(
         self,
@@ -787,18 +801,30 @@ class ReplayRunner:
                 call_args = copy.deepcopy(action.args)
                 trusted_session = f"replay:{trajectory_id}"
                 trusted_confirmation = None
+                facade = (
+                    MCPRetailFacade(runtime, str(call_args.get("user_id", "")), session_id=trusted_session)
+                    if self.surface == "mcp"
+                    else None
+                )
                 if (
                     self.guardrails
                     and _needs_trusted_confirmation(action)
                     and isinstance(runtime, RetailTools)
                 ):
-                    trusted_confirmation = _trusted_authorization(
-                        runtime,
-                        session_id=trusted_session,
-                        operation=action.tool,
-                        arguments=call_args,
-                        request_text="replay confirmation",
-                    )
+                    if facade is not None:
+                        # The facade resolves the authorization itself at call time.
+                        facade.issue_confirmation(
+                            action.tool, _canonical_mcp_args(call_args), "replay confirmation"
+                        )
+                        facade.record_user_confirmation(TRUSTED_CONFIRMATION_RESPONSE)
+                    else:
+                        trusted_confirmation = _trusted_authorization(
+                            runtime,
+                            session_id=trusted_session,
+                            operation=action.tool,
+                            arguments=call_args,
+                            request_text="replay confirmation",
+                        )
                 if mutate_after_confirmation:
                     conn = connect(self.db_path)
                     try:
@@ -810,12 +836,15 @@ class ReplayRunner:
                     finally:
                         conn.close()
                 pre_dispatch = database_state(self.db_path)
-                result = runtime.call(
-                    action.tool,
-                    _session_id=trusted_session if trusted_confirmation else None,
-                    _confirmation_id=trusted_confirmation,
-                    **call_args,
-                )
+                if facade is not None:
+                    result = _call_mcp_method(facade, action.tool, _canonical_mcp_args(call_args))
+                else:
+                    result = runtime.call(
+                        action.tool,
+                        _session_id=trusted_session if trusted_confirmation else None,
+                        _confirmation_id=trusted_confirmation,
+                        **call_args,
+                    )
             except Exception as exc:  # pragma: no cover - defensive adapter boundary
                 result = {"ok": False, "changed": False, "error": f"{type(exc).__name__}: {exc}"}
                 pre_dispatch = database_state(self.db_path)
@@ -992,12 +1021,20 @@ ADVERSARIAL_FAMILIES: tuple[str, ...] = (
 
 
 def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dict[str, Any]:
-    """Run deterministic ON/OFF pairs; one fresh DB per case."""
+    """Run deterministic ON/OFF pairs plus a guarded MCP leg; one fresh DB per case.
+
+    The MCP leg is reported in its own block so the Direct ON/OFF counts stay
+    directly comparable with runs that predate it.
+    """
 
     del seed  # The SQLite seed is fixed below; keeping the argument documents determinism.
     rows: list[dict[str, Any]] = []
     family_stats: dict[str, Counter[str]] = {family: Counter() for family in ADVERSARIAL_FAMILIES}
+    mcp_family_stats: dict[str, Counter[str]] = {family: Counter() for family in ADVERSARIAL_FAMILIES}
     unresolved_confirmation = Counter()
+    mcp_stale = Counter()
+    mcp_vs_direct = Counter()
+    mcp_error_mismatch_families: Counter[str] = Counter()
     with tempfile.TemporaryDirectory(prefix="transaction-adversarial-") as directory:
         base = Path(directory)
         case_number = 0
@@ -1006,8 +1043,10 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                 case_number += 1
                 actions: list[CanonicalAction]
                 on_db, off_db = base / f"on-{case_number}.db", base / f"off-{case_number}.db"
+                mcp_db = base / f"mcp-{case_number}.db"
                 seed_database(on_db, users=40, orders=200, seed=20260720)
                 seed_database(off_db, users=40, orders=200, seed=20260720)
+                seed_database(mcp_db, users=40, orders=200, seed=20260720)
                 actions = _actions_for_case(on_db, family, index)
                 stale_probe = family == "stale_confirmation"
                 on_steps = ReplayRunner(on_db, guardrails=True).run(
@@ -1022,7 +1061,29 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                     task_id=family,
                     mutate_after_confirmation=stale_probe,
                 )
-                for step_on, step_off in zip(on_steps, off_steps):
+                mcp_steps = ReplayRunner(mcp_db, surface="mcp").run(
+                    actions,
+                    trajectory_id=f"adv-{case_number}",
+                    task_id=family,
+                    mutate_after_confirmation=stale_probe,
+                )
+                for step_on, step_off, step_mcp in zip(on_steps, off_steps, mcp_steps):
+                    mcp_family_stats[family]["executions"] += 1
+                    mcp_family_stats[family]["attempts"] += int(step_mcp.attempted_violation)
+                    mcp_family_stats[family]["blocked"] += int(step_mcp.blocked_violation)
+                    mcp_family_stats[family]["committed"] += int(step_mcp.committed_violation)
+                    mcp_vs_direct["post_state_mismatches"] += int(
+                        step_mcp.post_state_hash != step_on.post_state_hash
+                    )
+                    if step_mcp.normalized_error != step_on.normalized_error:
+                        mcp_vs_direct["error_mismatches"] += 1
+                        mcp_error_mismatch_families[family] += 1
+                    if family == "stale_confirmation":
+                        mcp_stale["executions"] += 1
+                        mcp_stale["state_commits_without_binding"] += int(bool(step_mcp.dispatch_state_diff))
+                        mcp_stale["observation_changed_mismatches"] += int(
+                            step_mcp.observation_changed_matches_state is False
+                        )
                     family_stats[family]["executions"] += 1
                     family_stats[family]["on_attempts"] += int(step_on.attempted_violation)
                     family_stats[family]["on_blocked"] += int(step_on.blocked_violation)
@@ -1059,6 +1120,7 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
                             "execution_class": execution_class,
                             "on": step_on.to_dict(),
                             "off": step_off.to_dict(),
+                            "mcp_on": step_mcp.to_dict(),
                         }
                     )
     total = Counter()
@@ -1069,6 +1131,9 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
     frozen_attempts = total["on_attempts"]
     valid_setup_or_control = total_executions - unresolved_executions - frozen_attempts
     escaped = total["on_committed"]
+    mcp_total = Counter()
+    for stats in mcp_family_stats.values():
+        mcp_total.update(stats)
     return {
         "measurement": "deterministic adversarial guardrail ON/OFF replay",
         "seed": 20260720,
@@ -1096,6 +1161,20 @@ def run_adversarial_suite(*, repetitions: int = 15, seed: int = 20260904) -> dic
             **dict(unresolved_confirmation),
         },
         "by_family": {family: dict(stats) for family, stats in family_stats.items()},
+        "mcp_on": {
+            "surface": "MCPRetailFacade over RetailTools; trusted host confirmations issued in-process",
+            "executions": mcp_total["executions"],
+            "attempts": mcp_total["attempts"],
+            "blocked": mcp_total["blocked"],
+            "committed": mcp_total["committed"],
+            "by_family": {family: dict(stats) for family, stats in mcp_family_stats.items()},
+            "stale_confirmation": dict(mcp_stale),
+            "vs_direct_on": {
+                "post_state_mismatches": mcp_vs_direct["post_state_mismatches"],
+                "error_mismatches": mcp_vs_direct["error_mismatches"],
+                "error_mismatches_by_family": dict(mcp_error_mismatch_families),
+            },
+        },
         "cases": rows,
     }
 
@@ -1118,7 +1197,11 @@ def _invoke_mcp(
         # Host-side callbacks, not MCP tools: the facade binds its own user_id.
         facade.issue_confirmation(action.tool, args, "differential confirmation")
         facade.record_user_confirmation(TRUSTED_CONFIRMATION_RESPONSE)
-    method = getattr(facade, action.tool)
+    return _call_mcp_method(facade, action.tool, args)
+
+
+def _call_mcp_method(facade: MCPRetailFacade, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    method = getattr(facade, tool)
     try:
         return method(**args)
     except TypeError as exc:
@@ -1485,6 +1568,7 @@ def _markdown_summary(
         f"- Deterministic adversarial executions: **{adversarial['executions']}** = **{adversarial['execution_classification']['frozen_contract_applicable_violations']}** frozen-contract violation attempts + **{adversarial['execution_classification']['valid_setup_or_control_executions']}** valid setup/control executions + **{adversarial['execution_classification']['unresolved_confirmation_binding_probes']}** stale-confirmation probes.",
         f"- Guarded: attempts={adversarial['on']['attempts']}, blocked={adversarial['on']['blocked']}, committed={adversarial['on']['committed']}.",
         f"- Counterfactual OFF: attempts={adversarial['off']['attempts']}, blocked={adversarial['off']['blocked']}, committed={adversarial['off']['committed']}.",
+        f"- Guarded MCP surface (separate block, not part of the ON/OFF counts): executions={adversarial['mcp_on']['executions']}, attempts={adversarial['mcp_on']['attempts']}, blocked={adversarial['mcp_on']['blocked']}, committed={adversarial['mcp_on']['committed']}; versus Direct ON post-state mismatches={adversarial['mcp_on']['vs_direct_on']['post_state_mismatches']}, error mismatches={adversarial['mcp_on']['vs_direct_on']['error_mismatches']} {adversarial['mcp_on']['vs_direct_on']['error_mismatches_by_family']}.",
         f"- Stale confirmation probe: **{stale['status']}**; guarded post-authorization state mutation commits without binding={stale['on_state_commits_without_binding']}, while the unsafe control commits={stale['off_state_commits_without_binding']}. Cross-process ledger, crash recovery, and concurrent execution remain unverified.",
         "",
         "## Direct vs MCP",
@@ -1539,6 +1623,8 @@ def main() -> None:
         "adversarial_executions": adversarial["executions"],
         "guarded_committed": adversarial["on"]["committed"],
         "off_committed": adversarial["off"]["committed"],
+        "mcp_on_committed": adversarial["mcp_on"]["committed"],
+        "mcp_on_vs_direct_on_error_mismatches": adversarial["mcp_on"]["vs_direct_on"]["error_mismatches"],
         "direct_mcp_state_mismatches": differential["state_mismatches"],
         "direct_mcp_observation_mismatches": differential["observation_mismatches"],
         "direct_mcp_error_mismatches": differential["error_mismatches"],
