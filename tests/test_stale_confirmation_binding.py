@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from ecommerce_rag.diagnostics.transaction_audit import database_state, state_diff, state_hash
+from ecommerce_rag.domain import AgentAction, TaskSpec
+from ecommerce_rag.harness import HarnessRunner
 from ecommerce_rag.mcp_server import MCPRetailFacade
 from ecommerce_rag.orders import connect, seed_database
 from ecommerce_rag.tools import RetailTools
@@ -68,7 +70,7 @@ def _authorize(
     )
     assert response["decision"] is True
     record = tools.confirmation_ledger.records[request_id]
-    authorization_id = tools.authorization_for(
+    authorization_id = tools.authorization_for_current_state(
         session_id=session_id,
         user_id=str(args["user_id"]),
         operation=operation,
@@ -317,10 +319,64 @@ def test_direct_and_mcp_both_block_a_stale_version(tmp_path):
         assert outcome[surface]["state_diff"] == {}
 
 
-@pytest.mark.xfail(strict=True, reason="统一授权查找前的已知分叉")
 def test_direct_and_mcp_report_the_same_stale_error(tmp_path):
-    # Direct forwards an id resolved at issue time and gets confirmation_stale;
-    # the facade resolves against current state, finds nothing, and gets
-    # confirmation_required.
+    # Direct forwards an id resolved at issue time; the facade locates the
+    # record without state. Both reach the state check in RetailTools.
     outcome = _direct_and_mcp_after_stale_version(tmp_path)
-    assert outcome["direct"]["result"]["error"] == outcome["mcp"]["result"]["error"]
+    assert outcome["direct"]["result"]["error"] == outcome["mcp"]["result"]["error"] == "confirmation_stale"
+
+
+@pytest.mark.parametrize("bump_after_confirmation", [False, True])
+def test_harness_reports_stale_confirmation_after_out_of_band_change(
+    tmp_path, bump_after_confirmation: bool
+):
+    db = tmp_path / "harness.db"
+    seed_database(db, users=40, orders=200)
+    order, code = _eligible(db)
+    args = {"order_id": order["order_id"], "user_id": order["user_id"], "verification_code": code}
+
+    class ConfirmThenWrite:
+        def act(self, observation):
+            tools = [item for item in observation.history if item.get("role") == "tool"]
+            if not tools:
+                return AgentAction.tool_call("check_return_eligibility", **args)
+            if tools[-1].get("name") == "create_return_request":
+                return AgentAction.answer("已处理。")
+            if observation.history[-1].get("role") != "user":
+                return AgentAction.answer(
+                    "是否确认提交退货？",
+                    requires_user_response=True,
+                    requested_input_type="confirmation",
+                )
+            if bump_after_confirmation:
+                # Out-of-band change between the user's confirmation and the write.
+                conn = connect(db)
+                try:
+                    conn.execute("UPDATE orders SET version=version+1 WHERE order_id=?", (order["order_id"],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            return AgentAction.tool_call("create_return_request", **args, confirmed=True)
+
+    task = TaskSpec(
+        "stale-harness", "return", order["user_id"], "我要退货", 1,
+        allowed_tools=["check_return_eligibility", "create_return_request"],
+        metadata={"order_id": order["order_id"], "confirmed": True},
+    )
+    trajectory, _result = HarnessRunner(db, policy=ConfirmThenWrite(), max_steps=6).run(task)
+
+    lookup = [span for span in trajectory.confirmation_spans if span["event"] == "authorization_lookup"]
+    assert lookup == [{
+        "step": lookup[0]["step"],
+        "event": "authorization_lookup",
+        "operation": "create_return_request",
+        "record_found": True,
+    }]
+    write = next(call for call in trajectory.tool_calls if call.name == "create_return_request")
+    return_status = _order_view(db, order["order_id"])["return_status"]
+    if bump_after_confirmation:
+        assert write.result["error"] == "confirmation_stale"
+        assert return_status is None
+    else:
+        assert write.result["ok"] is True
+        assert return_status == "requested"

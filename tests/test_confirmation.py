@@ -36,7 +36,7 @@ def _authorized(tools: RetailTools, order: dict, code: str, *, session_id: str =
         session_id=session_id, response_text="确认提交退货"
     )
     assert response["decision"] is True
-    return tools.authorization_for(
+    return tools.authorization_for_current_state(
         session_id=session_id, user_id=order["user_id"],
         operation="create_return_request", arguments=arguments,
     ) or ""
@@ -164,7 +164,7 @@ def test_refusal_revokes_pending_confirmation_and_replay_is_idempotent(tmp_path)
     )
     refusal = tools.record_user_confirmation(session_id="s1", response_text="不确认")
     assert refusal["decision"] is False
-    assert tools.authorization_for(
+    assert tools.authorization_for_current_state(
         session_id="s1", user_id=order["user_id"],
         operation="create_return_request", arguments=arguments,
     ) is None

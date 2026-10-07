@@ -754,7 +754,7 @@ def _trusted_authorization(
         session_id=session_id,
         response_text=TRUSTED_CONFIRMATION_RESPONSE,
     )
-    return runtime.authorization_for(
+    return runtime.locate_authorization(
         session_id=session_id,
         user_id=user_id,
         operation=operation,

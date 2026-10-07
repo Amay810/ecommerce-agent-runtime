@@ -380,7 +380,7 @@ class HarnessToolTests(unittest.TestCase):
                                  request_text="确认提交退货？")
         assert tools.record_user_confirmation(session_id="test",
                                               response_text="确认提交退货")["decision"] is True
-        confirmation_id = tools.authorization_for(
+        confirmation_id = tools.authorization_for_current_state(
             session_id="test", user_id=order["user_id"],
             operation="create_return_request", arguments=args)
         ok = tools.call("create_return_request", _session_id="test",

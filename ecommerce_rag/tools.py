@@ -164,7 +164,7 @@ class RetailTools:
             response_text=response_text,
         )
 
-    def authorization_for(
+    def authorization_for_current_state(
         self,
         *,
         session_id: str,
@@ -172,12 +172,46 @@ class RetailTools:
         operation: str,
         arguments: dict[str, Any],
     ) -> str | None:
+        """Return the authorization only while it still matches current SQLite state.
+
+        For test assertions only. Callers that forward an id to ``call`` use
+        ``locate_authorization``: checking state there would turn a stale
+        record into ``confirmation_required`` instead of ``confirmation_stale``.
+        """
+
         return self.confirmation_ledger.authorization_for(
             session_id=session_id,
             user_id=user_id,
             operation=operation,
             parameters=arguments,
             state_binding=self._confirmation_state_binding(arguments),
+        )
+
+    def locate_authorization(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        operation: str,
+        arguments: dict[str, Any],
+    ) -> str | None:
+        """Find the authorization a trusted caller should forward with a write.
+
+        Lookup is by session, user, operation and parameters only; state is
+        deliberately not part of it. ``_require_trusted_confirmation`` checks
+        the forwarded id against the current state, so a stale record is
+        reported as ``confirmation_stale`` on every call path instead of
+        disappearing into ``confirmation_required``. ``issue()`` revokes the
+        session's earlier records, so at most one authorized record matches.
+        """
+
+        if operation not in (WRITE_TOOLS - {"escalate_to_human"}):
+            return None
+        return self.confirmation_ledger.authorization_for(
+            session_id=session_id,
+            user_id=user_id,
+            operation=operation,
+            parameters=arguments,
         )
 
     def _confirmation_state_binding(self, arguments: dict[str, Any]) -> dict[str, Any]:

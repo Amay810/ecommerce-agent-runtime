@@ -176,9 +176,7 @@ def test_adversarial_suite_mcp_leg_blocks_like_direct_and_stays_separate():
     assert mcp["committed"] == 0
     assert mcp["stale_confirmation"]["state_commits_without_binding"] == 0
     assert mcp["vs_direct_on"]["post_state_mismatches"] == 0
-    # Known until authorization lookup is unified: Direct reports
-    # confirmation_stale, the facade confirmation_required.
-    assert set(mcp["vs_direct_on"]["error_mismatches_by_family"]) <= {"stale_confirmation"}
+    assert mcp["vs_direct_on"]["error_mismatches"] == 0
 
     # Valid setup steps must commit through MCP, so the blocks above are not
     # just a confirmation gate rejecting everything.

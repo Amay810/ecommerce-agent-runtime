@@ -62,7 +62,7 @@ def _call(tools: RetailTools, name: str, **arguments):
         assert tools.record_user_confirmation(
             session_id=session_id, response_text="确认执行"
         )["decision"] is True
-        confirmation_id = tools.authorization_for(
+        confirmation_id = tools.authorization_for_current_state(
             session_id=session_id,
             user_id=user_id,
             operation=name,

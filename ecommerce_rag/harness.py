@@ -783,17 +783,20 @@ class HarnessRunner:
             if action.action_type == "tool_call":
                 confirmation_id = None
                 if action.tool_name in WRITE_TOOLS and action.tool_name != "escalate_to_human":
-                    confirmation_id = tools.authorization_for(
+                    confirmation_id = tools.locate_authorization(
                         session_id=session_id,
                         user_id=task.user_id,
                         operation=action.tool_name or "",
                         arguments=action.arguments,
                     )
+                    # A found record is not yet a valid one: RetailTools checks
+                    # it against current state, and the tool result's error
+                    # carries that verdict.
                     confirmation_spans.append({
                         "step": step,
                         "event": "authorization_lookup",
                         "operation": action.tool_name,
-                        "authorized": bool(confirmation_id),
+                        "record_found": bool(confirmation_id),
                     })
                 is_research_call = action.tool_name in RESEARCH_TOOLS
                 if is_research_call:
