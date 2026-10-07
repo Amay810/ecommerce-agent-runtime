@@ -169,3 +169,33 @@ Its `0/0/0` mismatches therefore do not show that happy-path writes,
 terminal-state rejection, item or payment rejection, or the idempotent no-op
 were exercised. Its adversarial ON/OFF counts are reproduced exactly by
 ff0f8a2.
+
+**Revision.** 09fc5bd was produced on the research-find branches. The
+annotated tag `audit/transaction-contracts-09fc5bd` pins it. The tag message
+records the archive paths and artifact hashes.
+
+**Code relation to main.** Relative to 4aac5e1, the main commit those
+branches fork from, two of the modules that the audit loads differ:
+
+- `ecommerce_rag/tools.py` adds an opt-in, read-only product attribute view.
+  It is off by default.
+- `ecommerce_rag/domain.py` adds two scoring-version constants and an optional
+  `GradeResult.answer_diagnostics` field. The audit uses neither.
+
+All other modules the audit loads are identical to 4aac5e1:
+
+- `transaction_audit.py`
+- `scripts/audit_transaction_contracts.py`
+- `mcp_server.py`
+- `confirmation.py`
+- `orders.py`
+- `tool_schema.py`
+- `retail_protocol.py`
+- `config.py`
+
+The write and confirmation paths that the 09fc5bd run exercised are
+therefore the same as on 4aac5e1. Its conclusions above apply to main's code
+at that point.
+
+The ff0f8a2 and 70eeacc runs are tagged `audit/transaction-contracts-ff0f8a2`
+and `audit/transaction-contracts-70eeacc`.
