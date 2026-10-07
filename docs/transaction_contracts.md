@@ -53,7 +53,41 @@ loop. They are evidence about wiring and safety contracts, not about model
 quality. The numbers below come from the frozen JSON artifacts named in each
 entry.
 
-### ff0f8a2 (current)
+### 70eeacc (current)
+
+- Revision `70eeacc91984342de8e1851e6b38a6d4aec40e95`, clean worktree, local
+  `.venv` (Python 3.12.3), `--repetitions 15`. This run follows the unified
+  authorization lookup; see
+  [stale authorizations](tools_and_safety.md#stale-authorizations).
+- Artifacts: `~/archives/ecommerce-audit/transaction_contracts_70eeacc/` with
+  `PROVENANCE.txt` and `SHA256SUMS`. `adversarial_suite.json` SHA-256
+  `a0be8dc66db1dda25154085b88c04ca06ed700f4861735a7ace928aafe4d5419`.
+  `direct_mcp_differential.json` SHA-256
+  `6fd3d0c1879285e955cc5511c7d2c5aaafed8afdb4fae4f6eaa0b5b7610ed746`, which is
+  byte-identical to ff0f8a2.
+- Adversarial Direct, from `adversarial_suite.json`:
+  - `execution_classification` is `150 = 105 + 30 + 15`.
+  - `on` attempts/blocked/committed are `105/105/0`, and `off` is `105/0/105`.
+  - For the stale probe, `on_state_commits_without_binding=0` and
+    `off_state_commits_without_binding=15`.
+  - `on`, `off`, `execution_classification`, `by_family`,
+    `known_unresolved_gap` and every Direct ON step error are identical to
+    ff0f8a2.
+- Adversarial MCP, from `mcp_on`:
+  - executions/attempts/blocked/committed are `150/105/105/0`, and `by_family`
+    is identical to ff0f8a2.
+  - `stale_confirmation.state_commits_without_binding=0`.
+  - `vs_direct_on` has `post_state_mismatches=0` and `error_mismatches=0`.
+  - The only change from ff0f8a2 is in the 15 `stale_confirmation` MCP steps.
+    They went from `confirmation_required` to `confirmation_stale`, which
+    matches Direct.
+- Differential, from `direct_mcp_differential.json`:
+  - `tools_tested=15`, `executions=42` and `trusted_confirmation_rows=21`.
+  - State, observation and error mismatches are `0/0/0`.
+  - Every row is identical to ff0f8a2, so the per-row table below still
+    applies.
+
+### ff0f8a2
 
 - Revision `ff0f8a222bc82ff1a22ea3cc370c21296f0981a6`, clean worktree, local
   `.venv` (Python 3.12.3), `--repetitions 15`.

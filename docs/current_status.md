@@ -55,6 +55,13 @@ dirty diff 拆写成可独立运行的实验 patch。
   MCP 确认写入目前只对进程内可信 host 有效，独立 server 仍然没有确认入口。详见
   [transaction contracts](transaction_contracts.md) 和
   [tools and safety](tools_and_safety.md#mcp-write-scope)。
+- `70eeacc` 统一了授权查找，所有调用路径遇到 stale 授权都返回
+  `confirmation_stale`。当前冻结的审计是 `70eeacc`。
+- harness span 字段从 `authorized` 改成了 `record_found`，两者语义不同，旧轨迹保留原
+  字段、不重标。
+- 这次改动不做 Native 对照。依据是代码结构论证加 RulePolicy 旁证，不是 Native 实测。
+  两个失效条件：出现中途改库的任务，或者 harness 开始为其他写工具签发确认。详见
+  [stale authorizations](tools_and_safety.md#stale-authorizations)。
 - 凭据、模型、缓存、SQLite 日志、原始轨迹和图谱生成物不进入仓库。
 
 ## 文档入口
